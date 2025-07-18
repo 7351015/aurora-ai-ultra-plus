@@ -1,0 +1,104 @@
+graphics:
+  resolution: !!python/tuple
+  - 1920
+  - 1080
+  fullscreen: false
+  vsync: true
+  anti_aliasing: 4
+  texture_quality: ultra
+  shadow_quality: ultra
+  particle_quality: ultra
+  render_distance: 1000
+  fov: 75.0
+  brightness: 1.0
+  contrast: 1.0
+  gamma: 1.0
+audio:
+  master_volume: 1.0
+  music_volume: 0.8
+  sfx_volume: 1.0
+  voice_volume: 1.0
+  ambient_volume: 0.7
+  audio_quality: high
+  spatial_audio: true
+  audio_device: null
+gameplay:
+  difficulty: normal
+  auto_save: true
+  auto_save_interval: 300
+  permadeath: false
+  friendly_fire: false
+  pvp_enabled: true
+  creative_mode: false
+  cheats_enabled: false
+  time_scale: 1.0
+  weather_enabled: true
+  day_night_cycle: true
+  hunger_enabled: true
+  thirst_enabled: true
+  temperature_enabled: true
+world:
+  world_size: infinite
+  world_type: normal
+  seed: null
+  biome_diversity: 1.0
+  structure_generation: true
+  ore_generation: true
+  cave_generation: true
+  dungeon_generation: true
+  village_generation: true
+  civilization_generation: true
+  portal_generation: true
+  sky_islands: true
+  underground_cities: true
+  space_zones: true
+ai:
+  ai_difficulty: normal
+  npc_intelligence: high
+  npc_memory: true
+  npc_emotions: true
+  npc_relationships: true
+  npc_evolution: true
+  npc_voice_interaction: true
+  ai_content_generation: true
+  consciousness_simulation: true
+  dream_simulation: true
+multiplayer:
+  max_players: 100
+  server_name: Infinitus Server
+  server_description: The ultimate sandbox experience
+  server_password: null
+  public_server: false
+  cross_platform: true
+  voice_chat: true
+  text_chat: true
+  player_collision: true
+  shared_inventory: false
+performance:
+  max_fps: 144
+  cpu_threads: -1
+  gpu_acceleration: true
+  memory_limit: 8192
+  cache_size: 2048
+  chunk_loading_distance: 16
+  entity_limit: 10000
+  particle_limit: 50000
+  dynamic_loading: true
+  level_of_detail: true
+  occlusion_culling: true
+modding:
+  mods_enabled: true
+  mod_directory: mods
+  auto_update_mods: true
+  mod_verification: true
+  custom_content: true
+  scripting_enabled: true
+  lua_scripting: true
+  python_scripting: true
+  visual_scripting: true
+debug_mode: false
+developer_mode: false
+telemetry_enabled: true
+auto_update: true
+language: en
+region: US

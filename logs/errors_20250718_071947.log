@@ -1,0 +1,6 @@
+2025-07-18 07:24:47,675 | ERROR    | infinitus.error | logger.py:164 | ❌ Failed to save world
+Exception: None
+
+2025-07-18 07:29:47,674 | ERROR    | infinitus.error | logger.py:164 | ❌ Failed to save world
+Exception: None
+

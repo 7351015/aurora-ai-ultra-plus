@@ -1,0 +1,9 @@
+2025-07-18 07:35:27,528 | INFO     | infinitus.main | logger.py:155 | 🌌 INFINITUS Logging System Initialized
+2025-07-18 07:35:27,528 | INFO     | infinitus.main | logger.py:155 | Log directory: /workspace/logs
+2025-07-18 07:35:27,528 | INFO     | infinitus.main | logger.py:155 | Log level: INFO
+2025-07-18 07:35:27,528 | INFO     | infinitus.main | logger.py:155 | 🎮 Game Engine initialized
+2025-07-18 07:35:27,528 | INFO     | infinitus.main | logger.py:155 | 🔧 Initializing game engine systems...
+2025-07-18 07:35:27,529 | INFO     | infinitus.main | logger.py:155 | ✅ Game engine initialization complete
+2025-07-18 07:35:28,194 | WARNING  | infinitus.main | logger.py:159 | ⚠️ No world loaded to save
+2025-07-18 07:35:28,194 | INFO     | infinitus.main | logger.py:155 | 🔄 Shutting down game engine...
+2025-07-18 07:35:28,296 | INFO     | infinitus.main | logger.py:155 | ✅ Game engine shutdown complete
