@@ -1,232 +1,249 @@
 #!/usr/bin/env python3
 """
-🌌 INFINITUS: The Ultimate Sandbox Survival Crafting God-Engine
-Main entry point for the most powerful open-world sandbox game ever created.
-
-Author: AI Assistant
-License: MIT
+INFINITUS - Next Generation Minecraft 2025
+The Ultimate Sandbox Survival Crafting Experience
 """
 
-import sys
-import os
 import asyncio
-import logging
+import sys
+import time
+import threading
 from pathlib import Path
-from typing import Optional
 
-# Add the project root to Python path
-PROJECT_ROOT = Path(__file__).parent
-sys.path.insert(0, str(PROJECT_ROOT))
-
-# Import core modules
+# Core game imports
 from core_engine.game_engine import GameEngine
 from core_engine.config import GameConfig
-from core_engine.logger import setup_logging
-from ui.main_menu import MainMenu
+from core_engine.logger import GameLogger
 from render.graphics_engine import GraphicsEngine
 from world_gen.world_generator import WorldGenerator
-from ai_system.consciousness_engine import ConsciousnessEngine
-from player.avatar_system import AvatarSystem
-from story.narrative_engine import NarrativeEngine
+from gameplay.minecraft_engine import MinecraftEngine
+from ui.main_menu import MainMenu
 from multiplayer.network_manager import NetworkManager
 
-# Version information
-__version__ = "1.0.0-alpha"
-__codename__ = "Genesis"
-
-class InfinitusLauncher:
-    """Main launcher for the Infinitus game engine."""
+class InfinitusGame:
+    """Main game class orchestrating all systems"""
     
     def __init__(self):
-        self.logger = None
-        self.config = None
-        self.game_engine = None
+        self.config = GameConfig()
+        self.logger = GameLogger()
         self.running = False
+        self.game_engine = None
+        self.graphics_engine = None
+        self.minecraft_engine = None
+        self.world_generator = None
+        self.network_manager = None
+        self.main_menu = None
         
     async def initialize(self):
-        """Initialize all core systems."""
-        print("🌌 Initializing INFINITUS God-Engine...")
-        
-        # Setup logging
-        self.logger = setup_logging()
-        self.logger.info(f"Starting Infinitus v{__version__} ({__codename__})")
-        
-        # Load configuration
-        self.config = GameConfig()
-        await self.config.load()
-        
-        # Initialize core systems
-        self.logger.info("Initializing core systems...")
-        
-        # Graphics engine
-        graphics_engine = GraphicsEngine(self.config)
-        await graphics_engine.initialize()
-        
-        # World generator
-        world_generator = WorldGenerator(self.config)
-        await world_generator.initialize()
-        
-        # AI consciousness engine
-        consciousness_engine = ConsciousnessEngine(self.config)
-        await consciousness_engine.initialize()
-        
-        # Avatar system
-        avatar_system = AvatarSystem(self.config)
-        await avatar_system.initialize()
-        
-        # Narrative engine
-        narrative_engine = NarrativeEngine(self.config)
-        await narrative_engine.initialize()
-        
-        # Network manager
-        network_manager = NetworkManager(self.config)
-        await network_manager.initialize()
-        
-        # Main game engine
-        self.game_engine = GameEngine(
-            config=self.config,
-            graphics_engine=graphics_engine,
-            world_generator=world_generator,
-            consciousness_engine=consciousness_engine,
-            avatar_system=avatar_system,
-            narrative_engine=narrative_engine,
-            network_manager=network_manager
-        )
-        
-        await self.game_engine.initialize()
-        
-        self.logger.info("✅ All systems initialized successfully!")
-        return True
-    
-    async def show_main_menu(self):
-        """Display the main menu."""
-        main_menu = MainMenu(self.config, self.game_engine)
-        choice = await main_menu.show()
-        
-        if choice == "new_game":
-            await self.start_new_game()
-        elif choice == "load_game":
-            await self.load_game()
-        elif choice == "multiplayer":
-            await self.join_multiplayer()
-        elif choice == "settings":
-            await self.show_settings()
-        elif choice == "exit":
-            await self.shutdown()
+        """Initialize all game systems"""
+        try:
+            self.logger.info("🚀 Initializing INFINITUS - Next Gen Minecraft 2025")
+            
+            # Initialize core systems
+            self.game_engine = GameEngine(self.config, self.logger)
+            await self.game_engine.initialize()
+            
+            # Initialize graphics engine
+            self.graphics_engine = GraphicsEngine(self.config, self.logger)
+            await self.graphics_engine.initialize()
+            
+            # Initialize world generator
+            self.world_generator = WorldGenerator(self.config, self.logger)
+            await self.world_generator.initialize()
+            
+            # Initialize Minecraft-style gameplay engine
+            self.minecraft_engine = MinecraftEngine(self.config, self.logger, self.graphics_engine)
+            await self.minecraft_engine.initialize()
+            
+            # Initialize networking
+            self.network_manager = NetworkManager(self.config, self.logger)
+            await self.network_manager.initialize()
+            
+            # Initialize UI
+            self.main_menu = MainMenu(self.config, self.logger, self.graphics_engine)
+            await self.main_menu.initialize()
+            
+            self.logger.info("✅ All systems initialized successfully")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"❌ Failed to initialize game: {e}")
             return False
-        
-        return True
     
-    async def start_new_game(self):
-        """Start a new single-player game."""
-        self.logger.info("🎮 Starting new game...")
-        
-        # Generate new world
-        world_name = f"World_{asyncio.get_event_loop().time():.0f}"
-        await self.game_engine.create_world(world_name)
-        
-        # Start game loop
+    async def run(self):
+        """Main game loop"""
         self.running = True
-        await self.game_loop()
-    
-    async def load_game(self):
-        """Load an existing game."""
-        self.logger.info("📂 Loading saved game...")
-        # Implementation for loading saved games
-        pass
-    
-    async def join_multiplayer(self):
-        """Join or host a multiplayer game."""
-        self.logger.info("🌐 Joining multiplayer...")
-        # Implementation for multiplayer
-        pass
-    
-    async def show_settings(self):
-        """Show game settings."""
-        self.logger.info("⚙️ Opening settings...")
-        # Implementation for settings
-        pass
-    
-    async def game_loop(self):
-        """Main game loop."""
-        self.logger.info("🎯 Entering main game loop...")
         
+        # Show splash screen
+        await self.show_splash_screen()
+        
+        # Show main menu
+        menu_choice = await self.main_menu.show()
+        
+        if menu_choice == "singleplayer":
+            await self.start_singleplayer()
+        elif menu_choice == "multiplayer":
+            await self.start_multiplayer()
+        elif menu_choice == "create_world":
+            await self.create_world()
+        elif menu_choice == "settings":
+            await self.show_settings()
+        elif menu_choice == "exit":
+            await self.shutdown()
+            return
+        
+        # Main game loop
         while self.running:
             try:
                 # Update all systems
                 await self.game_engine.update()
-                
-                # Render frame
-                await self.game_engine.render()
+                await self.minecraft_engine.update()
+                await self.graphics_engine.render()
                 
                 # Handle events
-                events = await self.game_engine.get_events()
-                for event in events:
-                    if event.type == "quit":
-                        self.running = False
-                        break
-                    await self.game_engine.handle_event(event)
+                await self.handle_events()
                 
-                # Small delay to prevent CPU overload
-                await asyncio.sleep(0.001)
+                # Sleep for frame rate control
+                await asyncio.sleep(1.0 / self.config.graphics.target_fps)
                 
             except KeyboardInterrupt:
-                self.logger.info("⚠️ Received interrupt signal")
-                self.running = False
+                self.logger.info("🛑 Received shutdown signal")
                 break
             except Exception as e:
-                self.logger.error(f"❌ Error in game loop: {e}")
-                # Don't crash the game, just log the error
-                continue
+                self.logger.error(f"❌ Game loop error: {e}")
+                break
+    
+    async def show_splash_screen(self):
+        """Show the game splash screen"""
+        splash_art = """
+    ╔══════════════════════════════════════════════════════════════════════════════════════╗
+    ║                                                                                      ║
+    ║    ██╗███╗   ██╗███████╗██╗███╗   ██╗██╗████████╗██╗   ██╗███████╗                 ║
+    ║    ██║████╗  ██║██╔════╝██║████╗  ██║██║╚══██╔══╝██║   ██║██╔════╝                 ║
+    ║    ██║██╔██╗ ██║█████╗  ██║██╔██╗ ██║██║   ██║   ██║   ██║███████╗                 ║
+    ║    ██║██║╚██╗██║██╔══╝  ██║██║╚██╗██║██║   ██║   ██║   ██║╚════██║                 ║
+    ║    ██║██║ ╚████║██║     ██║██║ ╚████║██║   ██║   ╚██████╔╝███████║                 ║
+    ║    ╚═╝╚═╝  ╚═══╝╚═╝     ╚═╝╚═╝  ╚═══╝╚═╝   ╚═╝    ╚═════╝ ╚══════╝                 ║
+    ║                                                                                      ║
+    ║                    🌟 NEXT GENERATION MINECRAFT 2025 🌟                             ║
+    ║                  The Ultimate Sandbox Survival Experience                           ║
+    ║                                                                                      ║
+    ║    ✨ Features:                                                                      ║
+    ║    • Infinite Procedural Worlds with 50+ Biomes                                     ║
+    ║    • Advanced AI NPCs with Consciousness & Memory                                    ║
+    ║    • Real-time Physics & Voxel Deformation                                          ║
+    ║    • All Minecraft Mods Integrated (Magic, Tech, Automation)                        ║
+    ║    • Dynamic Weather, Seasons & Day/Night Cycles                                     ║
+    ║    • Multiplayer Universe with Persistent Worlds                                     ║
+    ║    • Epic Storyline Across 7 Cosmic Orders                                          ║
+    ║    • Unlimited Creativity & Building Tools                                           ║
+    ║    • Ray-Traced Graphics & Advanced Lighting                                         ║
+    ║    • Voice Commands & AI Assistant Integration                                       ║
+    ║                                                                                      ║
+    ║                        Press ENTER to begin your journey...                         ║
+    ║                                                                                      ║
+    ╚══════════════════════════════════════════════════════════════════════════════════════╝
+        """
+        
+        print(splash_art)
+        input()  # Wait for user input
+    
+    async def start_singleplayer(self):
+        """Start singleplayer game"""
+        self.logger.info("🎮 Starting singleplayer game")
+        
+        # Generate or load world
+        world_name = "MyWorld"
+        world = await self.world_generator.generate_world(world_name)
+        
+        # Initialize player
+        await self.minecraft_engine.create_player(world)
+        
+        # Start game systems
+        await self.minecraft_engine.start_game()
+        
+        self.logger.info("✅ Singleplayer game started successfully")
+    
+    async def start_multiplayer(self):
+        """Start multiplayer game"""
+        self.logger.info("🌐 Starting multiplayer game")
+        
+        # Connect to server or create server
+        server_choice = await self.main_menu.show_multiplayer_menu()
+        
+        if server_choice == "create_server":
+            await self.network_manager.create_server()
+        elif server_choice == "join_server":
+            server_address = await self.main_menu.get_server_address()
+            await self.network_manager.connect_to_server(server_address)
+        
+        # Start multiplayer game
+        await self.minecraft_engine.start_multiplayer_game()
+        
+        self.logger.info("✅ Multiplayer game started successfully")
+    
+    async def create_world(self):
+        """Create a new world"""
+        self.logger.info("🌍 Creating new world")
+        
+        # Get world creation parameters
+        world_params = await self.main_menu.get_world_creation_params()
+        
+        # Generate world
+        world = await self.world_generator.create_custom_world(world_params)
+        
+        self.logger.info(f"✅ World '{world.name}' created successfully")
+    
+    async def show_settings(self):
+        """Show game settings"""
+        await self.main_menu.show_settings()
+    
+    async def handle_events(self):
+        """Handle game events"""
+        # Process input events
+        await self.minecraft_engine.handle_input()
+        
+        # Process network events
+        await self.network_manager.process_events()
+        
+        # Process UI events
+        await self.main_menu.handle_events()
     
     async def shutdown(self):
-        """Gracefully shutdown the game."""
-        self.logger.info("🔄 Shutting down Infinitus...")
+        """Shutdown game gracefully"""
+        self.logger.info("🛑 Shutting down INFINITUS")
+        self.running = False
         
+        # Shutdown all systems
+        if self.minecraft_engine:
+            await self.minecraft_engine.shutdown()
+        if self.graphics_engine:
+            await self.graphics_engine.shutdown()
+        if self.network_manager:
+            await self.network_manager.shutdown()
         if self.game_engine:
             await self.game_engine.shutdown()
         
-        self.logger.info("✅ Shutdown complete. Thank you for playing Infinitus!")
+        self.logger.info("✅ Shutdown complete")
 
 async def main():
-    """Main entry point."""
+    """Main entry point"""
+    game = InfinitusGame()
+    
     try:
-        # ASCII art welcome message
-        print("""
-    ╔══════════════════════════════════════════════════════════════════╗
-    ║                                                                  ║
-    ║    🌌 INFINITUS: The Ultimate Sandbox Survival Crafting Game    ║
-    ║                                                                  ║
-    ║    "In Infinitus, you don't just play the game -                ║
-    ║     you become the universe."                                    ║
-    ║                                                                  ║
-    ║    Version: {:<10} Codename: {:<20}                ║
-    ║                                                                  ║
-    ╚══════════════════════════════════════════════════════════════════╝
-        """.format(__version__, __codename__))
-        
-        # Initialize and run the game
-        launcher = InfinitusLauncher()
-        
-        if await launcher.initialize():
-            # Show main menu and handle user choice
-            while await launcher.show_main_menu():
-                pass
-        
-        await launcher.shutdown()
-        
+        # Initialize game
+        if await game.initialize():
+            # Run game
+            await game.run()
+        else:
+            print("❌ Failed to initialize game")
+            sys.exit(1)
     except Exception as e:
-        print(f"❌ Fatal error: {e}")
-        logging.exception("Fatal error in main()")
+        print(f"❌ Critical error: {e}")
         sys.exit(1)
+    finally:
+        await game.shutdown()
 
 if __name__ == "__main__":
     # Run the game
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\n🛑 Game interrupted by user")
-        sys.exit(0)
-    except Exception as e:
-        print(f"❌ Failed to start game: {e}")
-        sys.exit(1)
+    asyncio.run(main())
