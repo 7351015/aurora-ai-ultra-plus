@@ -456,6 +456,10 @@ class WorldGenerator:
                         'priority': dx*dx + dz*dz  # Distance-based priority
                     })
     
+    async def request_chunk_streaming(self, world_x: int, world_z: int):
+        """Public API to request chunks around a world position to be streamed in."""
+        await self._ensure_chunks_loaded(world_x, world_z)
+    
     def set_player_position(self, player_id: str, x: int, z: int):
         """Update player position for chunk streaming."""
         self.player_positions[player_id] = (x // 16, z // 16)

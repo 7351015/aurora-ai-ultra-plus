@@ -24,6 +24,8 @@ class Player:
     position: Tuple[float, float, float]
     rotation: Tuple[float, float] = (0.0, 0.0)
     inventory: Dict[str, int] = field(default_factory=dict)
+    hotbar: List[str] = field(default_factory=lambda: ["stone", "dirt", "grass"])
+    hotbar_index: int = 0
 
     def add_item(self, item_id: str, count: int = 1) -> None:
         self.inventory[item_id] = self.inventory.get(item_id, 0) + count
@@ -116,18 +118,36 @@ class MinecraftEngine:
         """Process input events from the graphics/input layer if available."""
         if hasattr(self.graphics_engine, "get_events"):
             events = await self.graphics_engine.get_events()
-            # Input processing placeholder; integrate with actual input system later
             if not events:
                 return
             player = self.get_local_player()
             if not player:
                 return
             for ev in events:
-                # Expected format depends on GraphicsEngine; keep generic
-                if ev.get("type") == "move":
+                et = ev.get("type")
+                if et == "move":
                     dx, dy, dz = ev.get("delta", (0.0, 0.0, 0.0))
                     x, y, z = player.position
                     player.position = (x + dx, y + dy, z + dz)
+                elif et == "look":
+                    # Store simple orientation on player for camera to read
+                    mx, my = ev.get("delta", (0.0, 0.0))
+                    yaw, pitch = player.rotation
+                    player.rotation = (yaw + mx * 0.1, max(-89.0, min(89.0, pitch - my * 0.1)))
+                elif et == "action":
+                    btn = ev.get("button")
+                    # Very simple raycast substitute: act on current chunk origin center
+                    chunk_key = "0,0"
+                    if btn == "break":
+                        # Set a center top block to air
+                        self._set_demo_block(chunk_key, 8, 65, 8, BLOCK_AIR)
+                    elif btn == "place":
+                        # Place selected hotbar block id (map name->id)
+                        block_id = self._selected_block_id(player)
+                        self._set_demo_block(chunk_key, 8, 65, 8, block_id)
+                elif et == "hotbar":
+                    delta = ev.get("delta", 0)
+                    player.hotbar_index = (player.hotbar_index + int(delta)) % max(1, len(player.hotbar))
 
     async def shutdown(self) -> None:
         self._running = False
@@ -175,3 +195,19 @@ class MinecraftEngine:
             return True
         except Exception:
             return False
+
+    def _selected_block_id(self, player: Player) -> int:
+        name = player.hotbar[player.hotbar_index] if player.hotbar else "stone"
+        return {"stone": 1, "dirt": 2, "grass": 3}.get(name, 1)
+
+    def _set_demo_block(self, chunk_key: str, x: int, y: int, z: int, block_id: int) -> None:
+        if not self.world_data:
+            return
+        chunks = self.world_data.get("spawn_chunks", {})
+        chunk = chunks.get(chunk_key)
+        if not chunk:
+            return
+        try:
+            chunk["blocks"][x][y][z] = block_id
+        except Exception:
+            return

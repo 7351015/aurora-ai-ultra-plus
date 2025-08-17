@@ -54,6 +54,13 @@ class GraphicsEngine:
             self._screen = pygame.display.set_mode((width, height), flags)
             pygame.display.set_caption("INFINITUS - Next Gen Sandbox")
             self._clock = pygame.time.Clock()
+            # Enable relative mouse for FPS look
+            try:
+                pygame.event.set_grab(True)
+                pygame.mouse.set_visible(False)
+                pygame.mouse.get_rel()
+            except Exception:
+                pass
             self._headless = False
             self.logger.info("✅ Graphics Engine initialization complete")
         except Exception as e:
@@ -101,7 +108,12 @@ class GraphicsEngine:
                 player = self._gameplay_engine.get_local_player()
                 if player:
                     # Align camera to player position; simple yaw progression
-                    self._camera.set_pose((player.position[0], player.position[1], player.position[2]), 45.0, -15.0)
+                    yaw, pitch = (0.0, 0.0)
+                    try:
+                        yaw, pitch = player.rotation
+                    except Exception:
+                        pass
+                    self._camera.set_pose((player.position[0], player.position[1], player.position[2]), yaw, pitch)
                 mvp = self._camera.view_projection_flat(width, height)
             else:
                 mvp = (
@@ -176,9 +188,24 @@ class GraphicsEngine:
         for evt in pygame.event.get():
             if evt.type == pygame.QUIT:
                 events.append({"type": "quit"})
+            elif evt.type == pygame.MOUSEBUTTONDOWN:
+                if evt.button == 1:
+                    events.append({"type": "action", "button": "break"})
+                elif evt.button == 3:
+                    events.append({"type": "action", "button": "place"})
+                elif evt.button in (4, 5):
+                    events.append({"type": "hotbar", "delta": -1 if evt.button == 4 else 1})
+        # Mouse look (relative movement)
+        try:
+            mx, my = pygame.mouse.get_rel()
+            if mx or my:
+                events.append({"type": "look", "delta": (float(mx), float(my))})
+        except Exception:
+            pass
         keys = pygame.key.get_pressed()
         dx = dz = dy = 0.0
-        speed = 0.2
+        base_speed = 0.08
+        speed = base_speed * (2.0 if keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT] else 1.0)
         if keys[pygame.K_LEFT] or keys[pygame.K_a]:
             dx -= speed
         if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
@@ -189,6 +216,8 @@ class GraphicsEngine:
             dz += speed
         if keys[pygame.K_SPACE]:
             dy += speed
+        if keys[pygame.K_LCTRL] or keys[pygame.K_RCTRL]:
+            dy -= speed
         if dx or dy or dz:
             events.append({"type": "move", "delta": (dx, dy, dz)})
         return events
