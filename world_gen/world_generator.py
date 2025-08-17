@@ -21,6 +21,7 @@ from .portal_generator import PortalGenerator
 from .noise_generator import NoiseGenerator
 from .ore_generator import OreGenerator
 from .cave_generator import CaveGenerator
+from lighting.light_engine import LightEngine
 
 class WorldType(Enum):
     """Types of worlds that can be generated."""
@@ -342,6 +343,12 @@ class WorldGenerator:
     
     def _serialize_chunk(self, chunk: Chunk) -> Dict[str, Any]:
         """Serialize chunk data for storage."""
+        # Compute skylight on demand
+        skylight = []
+        try:
+            skylight = LightEngine.compute_skylight(chunk.blocks)
+        except Exception:
+            skylight = []
         return {
             'x': chunk.x,
             'z': chunk.z,
@@ -349,6 +356,7 @@ class WorldGenerator:
             'biomes': chunk.biomes,
             'structures': chunk.structures,
             'entities': chunk.entities,
+            'skylight': skylight,
             'generated': chunk.generated,
             'populated': chunk.populated
         }
