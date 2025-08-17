@@ -16,6 +16,7 @@ from core_engine.save_system import SaveSystem
 from weather.weather_system import WeatherSystem
 from gameplay.crafting_system import CraftingSystem
 from gameplay.entity_system import EntitySystem
+from gameplay.stats_system import StatsSystem, PlayerStats
 
 
 # Minimal block ID mapping used by terrain generator
@@ -85,6 +86,7 @@ class MinecraftEngine:
         # Systems
         self.crafting = CraftingSystem()
         self.entities = EntitySystem()
+        self.stats = StatsSystem()
 
         # Game loop state
         self._running: bool = False
@@ -107,6 +109,8 @@ class MinecraftEngine:
         await self.weather.initialize()
         # Entities
         await self.entities.initialize()
+        # Stats
+        await self.stats.initialize()
         self.logger.info("✅ Minecraft Gameplay Engine ready")
 
     async def create_player(self, world_data: Dict[str, Any], name: str = "Player") -> str:
@@ -210,6 +214,13 @@ class MinecraftEngine:
         if self.save_system and self.config.gameplay.auto_save and self._autosave_elapsed >= float(self.config.gameplay.auto_save_interval):
             await self._do_autosave()
             self._autosave_elapsed = 0.0
+        # Stats update
+        if player:
+            pstats = getattr(player, 'stats', None)
+            if pstats is None:
+                player.stats = PlayerStats()
+                pstats = player.stats
+            await self.stats.update(delta_time, pstats)
 
     async def handle_input(self) -> None:
         """Process input events from the graphics/input layer if available."""
@@ -423,6 +434,7 @@ class MinecraftEngine:
                     "inventory": p.inventory,
                     "hotbar": p.hotbar,
                     "hotbar_index": p.hotbar_index,
+                    "stats": getattr(p, 'stats', None).__dict__ if getattr(p, 'stats', None) else None,
                 }
             self.world_data["players"] = pdata
         except Exception:

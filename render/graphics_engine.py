@@ -271,7 +271,15 @@ class GraphicsEngine:
                             ents = len(self._gameplay_engine.entities.get_entities())
                     except Exception:
                         ents = 0
-                    overlay = f"XYZ: {player.position[0]:.1f} {player.position[1]:.1f} {player.position[2]:.1f}  |  FPS: {fps:.1f}  |  TOD: {tod:.0f}  |  WX: {weather}  |  ENTS: {ents}"
+                    # Stats
+                    hh = ""
+                    try:
+                        ps = getattr(player, 'stats', None)
+                        if ps:
+                            hh = f" | HP: {ps.health:.0f}/{ps.max_health:.0f} HG: {ps.hunger:.0f}/{ps.max_hunger:.0f}"
+                    except Exception:
+                        pass
+                    overlay = f"XYZ: {player.position[0]:.1f} {player.position[1]:.1f} {player.position[2]:.1f}  |  FPS: {fps:.1f}  |  TOD: {tod:.0f}  |  WX: {weather}  |  ENTS: {ents}{hh}"
                     screen.blit(font_small.render(overlay, True, (230, 230, 230)), (8, 8))
                 except Exception:
                     pass
