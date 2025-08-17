@@ -19,6 +19,8 @@ from .structure_generator import StructureGenerator
 from .civilization_generator import CivilizationGenerator
 from .portal_generator import PortalGenerator
 from .noise_generator import NoiseGenerator
+from .ore_generator import OreGenerator
+from .cave_generator import CaveGenerator
 
 class WorldType(Enum):
     """Types of worlds that can be generated."""
@@ -74,12 +76,6 @@ class Chunk:
             # Initialize biomes (16x16)
             self.biomes = [[0 for _ in range(16)] for _ in range(16)]
 
-@dataclass
-class CreatedWorld:
-    """Wrapper for created world information."""
-    name: str
-    data: Dict[str, Any]
-
 class WorldGenerator:
     """Main world generation system."""
     
@@ -99,6 +95,8 @@ class WorldGenerator:
         self.structure_generator = StructureGenerator()
         self.civilization_generator = CivilizationGenerator()
         self.portal_generator = PortalGenerator()
+        self.ore_generator = OreGenerator()
+        self.cave_generator = CaveGenerator()
         
         # World data
         self.chunks: Dict[Tuple[int, int], Chunk] = {}
@@ -133,6 +131,8 @@ class WorldGenerator:
         await self.structure_generator.initialize()
         await self.civilization_generator.initialize()
         await self.portal_generator.initialize()
+        await self.ore_generator.initialize()
+        await self.cave_generator.initialize()
         
         # Start generation workers
         self.generation_running = True
@@ -196,14 +196,6 @@ class WorldGenerator:
         except Exception as e:
             self.logger.error(f"❌ Failed to generate world {world_name}: {e}")
             raise
-    
-    async def create_custom_world(self, world_params: Dict[str, Any]) -> CreatedWorld:
-        """Create a custom world using provided parameters and return a wrapper with name and data."""
-        config = dict(world_params or {})
-        world_name = config.pop("name", "CustomWorld")
-        self._apply_world_config(config)
-        data = await self.generate_world(world_name, config)
-        return CreatedWorld(name=world_name, data=data)
     
     def _apply_world_config(self, config: Dict):
         """Apply world configuration settings."""
@@ -269,6 +261,14 @@ class WorldGenerator:
             'frequency': self.world_settings.portal_frequency,
             'enable_portals': self.world_settings.enable_interdimensional_portals
         })
+        
+        # Configure ore and cave generators
+        await self.ore_generator.configure({
+            'seed': self.world_seed
+        })
+        await self.cave_generator.configure({
+            'seed': self.world_seed
+        })
     
     async def _generate_spawn_area(self) -> Dict[str, Any]:
         """Generate the initial spawn area."""
@@ -296,6 +296,13 @@ class WorldGenerator:
         chunk.blocks = await self.terrain_generator.generate_chunk_terrain(
             chunk_x, chunk_z, chunk.biomes
         )
+        
+        # Caves
+        if self.world_settings.enable_caves:
+            await self.cave_generator.carve_caves(chunk.blocks)
+        
+        # Ores
+        await self.ore_generator.populate_chunk_ores(chunk.blocks)
         
         # Generate structures
         if self.world_settings.enable_caves or self.world_settings.enable_dungeons:
@@ -514,6 +521,7 @@ class WorldGenerator:
         await self.structure_generator.shutdown()
         await self.civilization_generator.shutdown()
         await self.portal_generator.shutdown()
+        # ore/cave have no shutdown but keep symmetry
         
         # Clear data
         self.chunks.clear()
