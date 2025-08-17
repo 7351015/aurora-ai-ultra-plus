@@ -184,6 +184,9 @@ class GraphicsEngine:
                         tod = float(self._gameplay_engine._time_of_day)
                         # Peak at noon (~6000), dim at midnight
                         brightness = 0.2 + 0.8 * max(0.0, math.cos((tod - 6000.0) * (3.14159/12000.0)))
+                    # Weather dimming
+                    if self._gameplay_engine and getattr(self._gameplay_engine, "weather", None) is not None:
+                        brightness *= float(self._gameplay_engine.weather.get_brightness_modifier())
                 except Exception:
                     pass
                 self._voxel.render(mvp, brightness)
@@ -251,14 +254,18 @@ class GraphicsEngine:
                     pygame.draw.rect(screen, (200, 200, 200) if i == sel else (80, 80, 80), rect, 2)
                     label = font.render(name[:5], True, (220, 220, 220))
                     screen.blit(label, (x + 4, bar_y + 8))
-                # Overlay (coords, FPS, time-of-day)
+                # Overlay (coords, FPS, time-of-day, weather)
                 try:
                     font_small = pygame.font.Font(None, 18)
                     fps = self._clock.get_fps() if self._clock else 0.0
                     tod = 0.0
+                    weather = "clear"
                     if hasattr(self._gameplay_engine, "_time_of_day"):
                         tod = float(self._gameplay_engine._time_of_day)
-                    overlay = f"XYZ: {player.position[0]:.1f} {player.position[1]:.1f} {player.position[2]:.1f}  |  FPS: {fps:.1f}  |  TOD: {tod:.0f}"
+                    if hasattr(self._gameplay_engine, "weather") and self._gameplay_engine.weather:
+                        w = self._gameplay_engine.weather.get_overlay_info()
+                        weather = f"{w['state']} {w['intensity']:.2f}"
+                    overlay = f"XYZ: {player.position[0]:.1f} {player.position[1]:.1f} {player.position[2]:.1f}  |  FPS: {fps:.1f}  |  TOD: {tod:.0f}  |  WX: {weather}"
                     screen.blit(font_small.render(overlay, True, (230, 230, 230)), (8, 8))
                 except Exception:
                     pass
