@@ -12,6 +12,7 @@ from typing import Dict, Any, List, Optional, Tuple
 from core_engine.config import GameConfig
 from world_gen.world_generator import WorldGenerator
 from core_engine.physics_engine import PhysicsEngine, PhysicsObject
+from core_engine.save_system import SaveSystem
 
 
 # Minimal block ID mapping used by terrain generator
@@ -68,6 +69,13 @@ class MinecraftEngine:
         self.physics: Optional[PhysicsEngine] = None
         self.player_body_id: Optional[str] = None
 
+        # Persistence
+        self.save_system: Optional[SaveSystem] = None
+        self._autosave_elapsed: float = 0.0
+
+        # Day-night
+        self._time_of_day: float = 6000.0  # 0..24000
+
         # Game loop state
         self._running: bool = False
         self._tick: int = 0
@@ -82,6 +90,9 @@ class MinecraftEngine:
         # Physics engine for player controller
         self.physics = PhysicsEngine(self.config)
         await self.physics.initialize()
+        # Save system
+        self.save_system = SaveSystem()
+        await self.save_system.initialize()
         self.logger.info("✅ Minecraft Gameplay Engine ready")
 
     async def create_player(self, world_data: Dict[str, Any], name: str = "Player") -> str:
@@ -89,7 +100,11 @@ class MinecraftEngine:
         if not world_data or "metadata" not in world_data:
             raise ValueError("World data missing metadata for spawn")
         self.world_data = world_data
-        spawn = world_data["metadata"].get("spawn_point", (0.0, 80.0, 0.0))
+        # Initialize world metadata fields as needed
+        self.world_data.setdefault("players", {})
+        self.world_data.setdefault("metadata", {})
+        self.world_data["metadata"].setdefault("time_of_day", self._time_of_day)
+        spawn = self.world_data["metadata"].get("spawn_point", (0.0, 80.0, 0.0))
         player_id = "local"
         self.players[player_id] = Player(player_id=player_id, name=name, position=tuple(spawn))
         self.local_player_id = player_id
@@ -118,6 +133,11 @@ class MinecraftEngine:
         self.loaded = True
         self._running = True
         self._last_update_time = None
+        # Load time of day if present
+        try:
+            self._time_of_day = float(self.world_data.get("metadata", {}).get("time_of_day", 6000.0))
+        except Exception:
+            self._time_of_day = 6000.0
         self.logger.info("🎮 Singleplayer session started")
 
     async def start_multiplayer_game(self) -> None:
@@ -154,6 +174,16 @@ class MinecraftEngine:
                 self.world_generator.set_player_position(self.local_player_id, int(player.position[0]), int(player.position[2]))
             except Exception:
                 pass
+        # Day-night cycle
+        self._time_of_day = (self._time_of_day + delta_time * 120.0) % 24000.0
+        if self.world_data is not None:
+            self.world_data.setdefault("metadata", {})
+            self.world_data["metadata"]["time_of_day"] = self._time_of_day
+        # Autosave
+        self._autosave_elapsed += delta_time
+        if self.save_system and self.config.gameplay.auto_save and self._autosave_elapsed >= float(self.config.gameplay.auto_save_interval):
+            await self._do_autosave()
+            self._autosave_elapsed = 0.0
 
     async def handle_input(self) -> None:
         """Process input events from the graphics/input layer if available."""
@@ -223,6 +253,8 @@ class MinecraftEngine:
             await self.world_generator.shutdown()
         if self.physics:
             await self.physics.shutdown()
+        if self.save_system:
+            await self.save_system.shutdown()
         self.logger.info("✅ Minecraft Gameplay Engine shutdown complete")
 
     # ----- Convenience gameplay APIs -----
@@ -260,6 +292,31 @@ class MinecraftEngine:
             return True
         except Exception:
             return False
+
+    def get_render_chunks(self) -> List[Tuple[int, int, List[List[List[int]]]]]:
+        """Return a list of (chunk_x, chunk_z, blocks) for rendering."""
+        chunks_out: List[Tuple[int, int, List[List[List[int]]]]] = []
+        # Include spawn chunks from static world_data
+        if self.world_data and "spawn_chunks" in self.world_data:
+            for key, data in self.world_data["spawn_chunks"].items():
+                try:
+                    cx_str, cz_str = key.split(",")
+                    cx, cz = int(cx_str), int(cz_str)
+                    blocks = data.get("blocks", [])
+                    if blocks:
+                        chunks_out.append((cx, cz, blocks))
+                except Exception:
+                    continue
+        # Include dynamically loaded chunks if any
+        if self.world_generator:
+            try:
+                loaded = self.world_generator.get_loaded_chunks()
+                for (cx, cz), chunk in loaded.items():
+                    if chunk and chunk.blocks:
+                        chunks_out.append((cx, cz, chunk.blocks))
+            except Exception:
+                pass
+        return chunks_out
 
     def _selected_block_id(self, player: Player) -> int:
         name = player.hotbar[player.hotbar_index] if player.hotbar else "stone"
@@ -324,3 +381,30 @@ class MinecraftEngine:
             prev = (int(wx), int(wy), int(wz))
             t += step
         return None
+
+    async def _do_autosave(self) -> None:
+        """Save world and player data using SaveSystem."""
+        if not self.save_system or not self.world_data:
+            return
+        # Attach player data
+        try:
+            pdata = {}
+            for pid, p in self.players.items():
+                pdata[pid] = {
+                    "name": p.name,
+                    "position": p.position,
+                    "rotation": p.rotation,
+                    "inventory": p.inventory,
+                    "hotbar": p.hotbar,
+                    "hotbar_index": p.hotbar_index,
+                }
+            self.world_data["players"] = pdata
+        except Exception:
+            pass
+        # Use world name from metadata
+        world_name = str(self.world_data.get("metadata", {}).get("name", "World"))
+        try:
+            await self.save_system.save_world(world_name, self.world_data)
+            self.logger.info("💾 Autosaved world")
+        except Exception as e:
+            self.logger.warning(f"Autosave failed: {e}")
