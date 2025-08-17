@@ -8,6 +8,9 @@ import logging
 import os
 from typing import Dict, List, Any, Optional, Tuple
 
+from .mesh_builder import build_chunk_mesh
+from .voxel_renderer import VoxelRenderer
+
 class GraphicsEngine:
     """Graphics and rendering system."""
     
@@ -21,12 +24,19 @@ class GraphicsEngine:
         self._headless = False
         self._gameplay_engine = None
         self._tile_size = 24
+        # 3D pipeline
+        self._voxel: Optional[VoxelRenderer] = None
+        self._positions: Optional[List[float]] = None
+        self._colors: Optional[List[float]] = None
     
     def set_gameplay_engine(self, engine: Any) -> None:
         self._gameplay_engine = engine
     
     async def initialize(self):
         self.logger.info("🔧 Initializing Graphics Engine...")
+        # Initialize 3D renderer (safe to fail)
+        self._voxel = VoxelRenderer(self.config)
+        self._voxel.initialize()
         # Lazy-import pygame to avoid dependency at import time
         try:
             import pygame
@@ -50,9 +60,50 @@ class GraphicsEngine:
             self._headless = True
             self.logger.warning(f"⚠️ Graphics initialization failed or headless environment detected: {e}")
             self.logger.info("✅ Headless Graphics mode enabled")
+        # Prebuild mesh if world already exists
+        self._try_build_spawn_mesh()
+    
+    def _try_build_spawn_mesh(self) -> None:
+        if not self._gameplay_engine:
+            return
+        wd = getattr(self._gameplay_engine, "world_data", None)
+        if not wd:
+            return
+        spawn_chunks = wd.get("spawn_chunks", {})
+        key = "0,0" if "0,0" in spawn_chunks else (next(iter(spawn_chunks)) if spawn_chunks else None)
+        if not key:
+            return
+        chunk = spawn_chunks[key]
+        blocks = chunk.get("blocks", [])
+        try:
+            pos, col = build_chunk_mesh(blocks)
+            self._positions, self._colors = pos, col
+            if self._voxel and self._voxel.available:
+                self._voxel.load_mesh(pos, col)
+        except Exception as e:
+            self.logger.debug(f"Mesh build failed: {e}")
     
     async def render(self):
         """Render the current frame."""
+        # Build mesh lazily after world is ready
+        if self._positions is None:
+            self._try_build_spawn_mesh()
+        # If we have a 3D renderer, attempt 3D draw
+        if self._voxel and self._voxel.available and self._positions:
+            # Minimal identity MVP (no camera yet)
+            mvp = (
+                1,0,0,0,
+                0,1,0,0,
+                0,0,1,0,
+                0,0,0,1,
+            )
+            try:
+                self._voxel.render(mvp)
+            except Exception as e:
+                self.logger.debug(f"3D render failed: {e}")
+            await asyncio.sleep(0)
+            return
+        # 2D/headless fallback
         if self._headless or self._pygame is None or self._screen is None:
             await asyncio.sleep(0)
             return
@@ -73,9 +124,7 @@ class GraphicsEngine:
                     offset_x, offset_y = 20, 20
                     for x in range(min(16, len(blocks))):
                         column = blocks[x]
-                        # Find highest non-air block in column center z=8 for simplicity
                         for z in range(min(16, len(column[0]))):
-                            # Highest Y for this x,z
                             highest_y = 63
                             if len(column) > 0 and len(column[0]) > z:
                                 for y in range(len(column) - 1, -1, -1):
@@ -85,7 +134,6 @@ class GraphicsEngine:
                                             break
                                     except Exception:
                                         break
-                            # Color based on height
                             h = max(0, min(255, int(highest_y)))
                             color = (h//2, h//3, h)
                             pygame.draw.rect(screen, color, (offset_x + x*tile, offset_y + z*tile, tile-1, tile-1))
