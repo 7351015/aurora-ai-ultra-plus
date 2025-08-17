@@ -5,11 +5,13 @@ Core gameplay loop for Minecraft-like mechanics: player, blocks, world session, 
 
 import asyncio
 import logging
+import math
 from dataclasses import dataclass, field
 from typing import Dict, Any, List, Optional, Tuple
 
 from core_engine.config import GameConfig
 from world_gen.world_generator import WorldGenerator
+from core_engine.physics_engine import PhysicsEngine, PhysicsObject
 
 
 # Minimal block ID mapping used by terrain generator
@@ -62,16 +64,24 @@ class MinecraftEngine:
         self.players: Dict[str, Player] = {}
         self.local_player_id: Optional[str] = None
 
+        # Physics
+        self.physics: Optional[PhysicsEngine] = None
+        self.player_body_id: Optional[str] = None
+
         # Game loop state
         self._running: bool = False
         self._tick: int = 0
         self._tasks: List[asyncio.Task] = []
+        self._last_update_time: Optional[float] = None
 
     async def initialize(self) -> None:
         self.logger.info("🔧 Initializing Minecraft Gameplay Engine...")
         # Prepare a local world generator for gameplay needs
         self.world_generator = WorldGenerator(self.config)
         await self.world_generator.initialize()
+        # Physics engine for player controller
+        self.physics = PhysicsEngine(self.config)
+        await self.physics.initialize()
         self.logger.info("✅ Minecraft Gameplay Engine ready")
 
     async def create_player(self, world_data: Dict[str, Any], name: str = "Player") -> str:
@@ -83,6 +93,20 @@ class MinecraftEngine:
         player_id = "local"
         self.players[player_id] = Player(player_id=player_id, name=name, position=tuple(spawn))
         self.local_player_id = player_id
+        # Create physics body
+        if self.physics:
+            body = PhysicsObject(
+                id="player",
+                position=(spawn[0], spawn[1], spawn[2]),
+                size=(0.6, 1.8, 0.6),
+                mass=70.0,
+                friction=0.8,
+                restitution=0.0,
+                static=False,
+                shape="box",
+            )
+            self.physics.add_object(body)
+            self.player_body_id = body.id
         self.logger.info(f"👤 Created player '{name}' at {spawn}")
         return player_id
 
@@ -93,26 +117,43 @@ class MinecraftEngine:
             self.world_data = await self.world_generator.generate_world("InfinitusWorld")
         self.loaded = True
         self._running = True
+        self._last_update_time = None
         self.logger.info("🎮 Singleplayer session started")
 
     async def start_multiplayer_game(self) -> None:
         """Start multiplayer session (placeholder wiring)."""
         self.loaded = True
         self._running = True
+        self._last_update_time = None
         self.logger.info("🌐 Multiplayer session started")
 
     async def update(self) -> None:
         if not self._running:
             return
         self._tick += 1
-        # Placeholder for per-tick gameplay logic
-        # Example: simple gravity if above ground
+        # Delta time
+        now = asyncio.get_event_loop().time()
+        if self._last_update_time is None:
+            delta_time = 1.0 / 60.0
+        else:
+            delta_time = max(0.0001, min(0.1, now - self._last_update_time))
+        self._last_update_time = now
+        # Physics update
+        if self.physics:
+            await self.physics.update(delta_time)
+            # Sync player position
+            if self.player_body_id and self.local_player_id in self.players:
+                body = self.physics.get_object(self.player_body_id)
+                if body:
+                    self.players[self.local_player_id].position = tuple(body.position)
+        # Stream chunks near player
         player = self.get_local_player()
-        if player:
-            x, y, z = player.position
-            # Clamp Y to be non-negative in this placeholder loop
-            if y > 0:
-                player.position = (x, y - 0.01, z)
+        if player and self.world_generator:
+            try:
+                await self.world_generator.request_chunk_streaming(int(player.position[0]), int(player.position[2]))
+                self.world_generator.set_player_position(self.local_player_id, int(player.position[0]), int(player.position[2]))
+            except Exception:
+                pass
 
     async def handle_input(self) -> None:
         """Process input events from the graphics/input layer if available."""
@@ -127,8 +168,20 @@ class MinecraftEngine:
                 et = ev.get("type")
                 if et == "move":
                     dx, dy, dz = ev.get("delta", (0.0, 0.0, 0.0))
-                    x, y, z = player.position
-                    player.position = (x + dx, y + dy, z + dz)
+                    # Map to physics velocity/impulse
+                    if self.physics and self.player_body_id:
+                        body = self.physics.get_object(self.player_body_id)
+                        if body:
+                            # Move relative to view yaw
+                            yaw_rad = math.radians(player.rotation[0])
+                            cos_y, sin_y = math.cos(yaw_rad), math.sin(yaw_rad)
+                            # Translate input vector into world space (ignoring pitch for movement)
+                            vx = dx * cos_y + dz * sin_y
+                            vz = dz * cos_y - dx * sin_y
+                            body.velocity = (vx * 3.0, body.velocity[1] + (dy * 4.0), vz * 3.0)
+                    else:
+                        x, y, z = player.position
+                        player.position = (x + dx, y + dy, z + dz)
                 elif et == "look":
                     # Store simple orientation on player for camera to read
                     mx, my = ev.get("delta", (0.0, 0.0))
@@ -136,22 +189,28 @@ class MinecraftEngine:
                     player.rotation = (yaw + mx * 0.1, max(-89.0, min(89.0, pitch - my * 0.1)))
                 elif et == "action":
                     btn = ev.get("button")
-                    # Very simple raycast substitute: act on current chunk origin center
-                    chunk_key = "0,0"
                     if btn == "break":
-                        # Set a center top block to air
-                        self._set_demo_block(chunk_key, 8, 65, 8, BLOCK_AIR)
-                        if hasattr(self.graphics_engine, "refresh_world_mesh"):
-                            self.graphics_engine.refresh_world_mesh()
+                        hit = self._raycast_block(player.position, player.rotation)
+                        if hit:
+                            chunk_key, bx, by, bz = hit
+                            self._set_demo_block(chunk_key, bx, by, bz, BLOCK_AIR)
+                            if hasattr(self.graphics_engine, "refresh_world_mesh"):
+                                self.graphics_engine.refresh_world_mesh()
                     elif btn == "place":
-                        # Place selected hotbar block id (map name->id)
-                        block_id = self._selected_block_id(player)
-                        self._set_demo_block(chunk_key, 8, 65, 8, block_id)
-                        if hasattr(self.graphics_engine, "refresh_world_mesh"):
-                            self.graphics_engine.refresh_world_mesh()
+                        hit = self._raycast_block(player.position, player.rotation, place=True)
+                        if hit:
+                            chunk_key, bx, by, bz = hit
+                            block_id = self._selected_block_id(player)
+                            self._set_demo_block(chunk_key, bx, by, bz, block_id)
+                            if hasattr(self.graphics_engine, "refresh_world_mesh"):
+                                self.graphics_engine.refresh_world_mesh()
                 elif et == "hotbar":
                     delta = ev.get("delta", 0)
                     player.hotbar_index = (player.hotbar_index + int(delta)) % max(1, len(player.hotbar))
+                elif et == "hotbar_select":
+                    idx = int(ev.get("index", 0))
+                    if 0 <= idx < len(player.hotbar):
+                        player.hotbar_index = idx
 
     async def shutdown(self) -> None:
         self._running = False
@@ -162,6 +221,8 @@ class MinecraftEngine:
         self._tasks.clear()
         if self.world_generator:
             await self.world_generator.shutdown()
+        if self.physics:
+            await self.physics.shutdown()
         self.logger.info("✅ Minecraft Gameplay Engine shutdown complete")
 
     # ----- Convenience gameplay APIs -----
@@ -215,3 +276,51 @@ class MinecraftEngine:
             chunk["blocks"][x][y][z] = block_id
         except Exception:
             return
+
+    def _raycast_block(self, position: Tuple[float, float, float], rotation: Tuple[float, float], place: bool = False) -> Optional[Tuple[str, int, int, int]]:
+        """Simple grid raycast within the origin chunk to find target block.
+        Returns (chunk_key, bx, by, bz) or None. If place=True, returns position of adjacent block.
+        """
+        if not self.world_data:
+            return None
+        chunks = self.world_data.get("spawn_chunks", {})
+        if "0,0" not in chunks:
+            return None
+        chunk_key = "0,0"
+        blocks = chunks[chunk_key].get("blocks", [])
+        if not blocks:
+            return None
+        # Ray from eye position forward
+        yaw, pitch = math.radians(rotation[0]), math.radians(rotation[1])
+        dirx = math.cos(pitch) * math.sin(yaw)
+        diry = math.sin(pitch)
+        dirz = math.cos(pitch) * math.cos(yaw)
+        ox, oy, oz = position
+        max_dist = 6.0
+        step = 0.1
+        prev = (int(ox), int(oy), int(oz))
+        t = 0.0
+        while t <= max_dist:
+            wx = ox + dirx * t
+            wy = oy + diry * t
+            wz = oz + dirz * t
+            bx = int(wx) % 16
+            by = max(0, min(len(blocks[0]) - 1, int(wy)))
+            bz = int(wz) % 16
+            try:
+                if place:
+                    # If current block is solid, place at previous empty
+                    if blocks[bx][by][bz] != BLOCK_AIR:
+                        px, py, pz = prev
+                        pbx = px % 16
+                        pby = max(0, min(len(blocks[0]) - 1, py))
+                        pbz = pz % 16
+                        return (chunk_key, pbx, pby, pbz)
+                else:
+                    if blocks[bx][by][bz] != BLOCK_AIR:
+                        return (chunk_key, bx, by, bz)
+            except Exception:
+                pass
+            prev = (int(wx), int(wy), int(wz))
+            t += step
+        return None
