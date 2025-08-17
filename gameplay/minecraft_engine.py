@@ -14,6 +14,8 @@ from world_gen.world_generator import WorldGenerator
 from core_engine.physics_engine import PhysicsEngine, PhysicsObject
 from core_engine.save_system import SaveSystem
 from weather.weather_system import WeatherSystem
+from gameplay.crafting_system import CraftingSystem
+from gameplay.entity_system import EntitySystem
 
 
 # Minimal block ID mapping used by terrain generator
@@ -79,6 +81,10 @@ class MinecraftEngine:
         
         # Weather
         self.weather: WeatherSystem = WeatherSystem()
+        
+        # Systems
+        self.crafting = CraftingSystem()
+        self.entities = EntitySystem()
 
         # Game loop state
         self._running: bool = False
@@ -99,6 +105,8 @@ class MinecraftEngine:
         await self.save_system.initialize()
         # Weather
         await self.weather.initialize()
+        # Entities
+        await self.entities.initialize()
         self.logger.info("✅ Minecraft Gameplay Engine ready")
 
     async def create_player(self, world_data: Dict[str, Any], name: str = "Player") -> str:
@@ -188,6 +196,10 @@ class MinecraftEngine:
         # Weather update
         if self.weather:
             await self.weather.update(delta_time)
+        # Entities update
+        if self.entities:
+            lp = (player.position[0], player.position[1], player.position[2]) if player else (0.0, 0.0, 0.0)
+            await self.entities.update(delta_time, lp)
         # Autosave
         self._autosave_elapsed += delta_time
         if self.save_system and self.config.gameplay.auto_save and self._autosave_elapsed >= float(self.config.gameplay.auto_save_interval):

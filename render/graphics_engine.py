@@ -265,7 +265,13 @@ class GraphicsEngine:
                     if hasattr(self._gameplay_engine, "weather") and self._gameplay_engine.weather:
                         w = self._gameplay_engine.weather.get_overlay_info()
                         weather = f"{w['state']} {w['intensity']:.2f}"
-                    overlay = f"XYZ: {player.position[0]:.1f} {player.position[1]:.1f} {player.position[2]:.1f}  |  FPS: {fps:.1f}  |  TOD: {tod:.0f}  |  WX: {weather}"
+                    ents = 0
+                    try:
+                        if hasattr(self._gameplay_engine, 'entities') and self._gameplay_engine.entities:
+                            ents = len(self._gameplay_engine.entities.get_entities())
+                    except Exception:
+                        ents = 0
+                    overlay = f"XYZ: {player.position[0]:.1f} {player.position[1]:.1f} {player.position[2]:.1f}  |  FPS: {fps:.1f}  |  TOD: {tod:.0f}  |  WX: {weather}  |  ENTS: {ents}"
                     screen.blit(font_small.render(overlay, True, (230, 230, 230)), (8, 8))
                 except Exception:
                     pass
