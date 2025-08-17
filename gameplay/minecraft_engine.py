@@ -76,6 +76,7 @@ class MinecraftEngine:
         """Create the local player at the world's spawn point."""
         if not world_data or "metadata" not in world_data:
             raise ValueError("World data missing metadata for spawn")
+        self.world_data = world_data
         spawn = world_data["metadata"].get("spawn_point", (0.0, 80.0, 0.0))
         player_id = "local"
         self.players[player_id] = Player(player_id=player_id, name=name, position=tuple(spawn))
@@ -147,16 +148,17 @@ class MinecraftEngine:
 
     def get_block(self, chunk_x: int, x: int, y: int, chunk_z: int, z: int) -> int:
         """Get a block by chunk-local coords. Returns block ID."""
-        # This placeholder accesses spawn chunks if available
         if not self.world_data:
             return BLOCK_AIR
-        chunks = self.world_data.get("spawn_chunks", [])
+        chunks = self.world_data.get("spawn_chunks", {})
         if not chunks:
             return BLOCK_AIR
-        # Use first chunk as a demo space
-        first_chunk = chunks[0]
+        key = f"{chunk_x},{chunk_z}"
+        if key not in chunks:
+            key = "0,0" if "0,0" in chunks else next(iter(chunks))
+        first_chunk = chunks.get(key, {})
         try:
-            return first_chunk["blocks"][x][y][z]
+            return first_chunk.get("blocks", [])[x][y][z]
         except Exception:
             return BLOCK_AIR
 

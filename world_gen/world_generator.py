@@ -74,6 +74,12 @@ class Chunk:
             # Initialize biomes (16x16)
             self.biomes = [[0 for _ in range(16)] for _ in range(16)]
 
+@dataclass
+class CreatedWorld:
+    """Wrapper for created world information."""
+    name: str
+    data: Dict[str, Any]
+
 class WorldGenerator:
     """Main world generation system."""
     
@@ -190,6 +196,14 @@ class WorldGenerator:
         except Exception as e:
             self.logger.error(f"❌ Failed to generate world {world_name}: {e}")
             raise
+    
+    async def create_custom_world(self, world_params: Dict[str, Any]) -> CreatedWorld:
+        """Create a custom world using provided parameters and return a wrapper with name and data."""
+        config = dict(world_params or {})
+        world_name = config.pop("name", "CustomWorld")
+        self._apply_world_config(config)
+        data = await self.generate_world(world_name, config)
+        return CreatedWorld(name=world_name, data=data)
     
     def _apply_world_config(self, config: Dict):
         """Apply world configuration settings."""
