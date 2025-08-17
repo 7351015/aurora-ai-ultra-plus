@@ -19,6 +19,9 @@ from .structure_generator import StructureGenerator
 from .civilization_generator import CivilizationGenerator
 from .portal_generator import PortalGenerator
 from .noise_generator import NoiseGenerator
+from .ore_generator import OreGenerator
+from .cave_generator import CaveGenerator
+from lighting.light_engine import LightEngine
 
 class WorldType(Enum):
     """Types of worlds that can be generated."""
@@ -93,6 +96,8 @@ class WorldGenerator:
         self.structure_generator = StructureGenerator()
         self.civilization_generator = CivilizationGenerator()
         self.portal_generator = PortalGenerator()
+        self.ore_generator = OreGenerator()
+        self.cave_generator = CaveGenerator()
         
         # World data
         self.chunks: Dict[Tuple[int, int], Chunk] = {}
@@ -127,6 +132,8 @@ class WorldGenerator:
         await self.structure_generator.initialize()
         await self.civilization_generator.initialize()
         await self.portal_generator.initialize()
+        await self.ore_generator.initialize()
+        await self.cave_generator.initialize()
         
         # Start generation workers
         self.generation_running = True
@@ -255,6 +262,14 @@ class WorldGenerator:
             'frequency': self.world_settings.portal_frequency,
             'enable_portals': self.world_settings.enable_interdimensional_portals
         })
+        
+        # Configure ore and cave generators
+        await self.ore_generator.configure({
+            'seed': self.world_seed
+        })
+        await self.cave_generator.configure({
+            'seed': self.world_seed
+        })
     
     async def _generate_spawn_area(self) -> Dict[str, Any]:
         """Generate the initial spawn area."""
@@ -282,6 +297,13 @@ class WorldGenerator:
         chunk.blocks = await self.terrain_generator.generate_chunk_terrain(
             chunk_x, chunk_z, chunk.biomes
         )
+        
+        # Caves
+        if self.world_settings.enable_caves:
+            await self.cave_generator.carve_caves(chunk.blocks)
+        
+        # Ores
+        await self.ore_generator.populate_chunk_ores(chunk.blocks)
         
         # Generate structures
         if self.world_settings.enable_caves or self.world_settings.enable_dungeons:
@@ -321,6 +343,12 @@ class WorldGenerator:
     
     def _serialize_chunk(self, chunk: Chunk) -> Dict[str, Any]:
         """Serialize chunk data for storage."""
+        # Compute skylight on demand
+        skylight = []
+        try:
+            skylight = LightEngine.compute_skylight(chunk.blocks)
+        except Exception:
+            skylight = []
         return {
             'x': chunk.x,
             'z': chunk.z,
@@ -328,6 +356,7 @@ class WorldGenerator:
             'biomes': chunk.biomes,
             'structures': chunk.structures,
             'entities': chunk.entities,
+            'skylight': skylight,
             'generated': chunk.generated,
             'populated': chunk.populated
         }
@@ -442,6 +471,10 @@ class WorldGenerator:
                         'priority': dx*dx + dz*dz  # Distance-based priority
                     })
     
+    async def request_chunk_streaming(self, world_x: int, world_z: int):
+        """Public API to request chunks around a world position to be streamed in."""
+        await self._ensure_chunks_loaded(world_x, world_z)
+    
     def set_player_position(self, player_id: str, x: int, z: int):
         """Update player position for chunk streaming."""
         self.player_positions[player_id] = (x // 16, z // 16)
@@ -496,6 +529,7 @@ class WorldGenerator:
         await self.structure_generator.shutdown()
         await self.civilization_generator.shutdown()
         await self.portal_generator.shutdown()
+        # ore/cave have no shutdown but keep symmetry
         
         # Clear data
         self.chunks.clear()
