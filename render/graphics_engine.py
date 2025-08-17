@@ -32,6 +32,9 @@ class GraphicsEngine:
         self._positions: Optional[List[float]] = None
         self._colors: Optional[List[float]] = None
         self._camera: Optional[FirstPersonCamera] = None
+        # Meshing loop
+        self._meshing_task: Optional[asyncio.Task] = None
+        self._mesh_rebuild_requested: bool = False
     
     def set_gameplay_engine(self, engine: Any) -> None:
         self._gameplay_engine = engine
@@ -40,6 +43,7 @@ class GraphicsEngine:
         """Public method to rebuild world mesh on-demand (e.g., after block edits)."""
         self._positions = None
         self._colors = None
+        self._mesh_rebuild_requested = True
         self._try_build_spawn_mesh()
     
     async def initialize(self):
@@ -80,6 +84,9 @@ class GraphicsEngine:
             self.logger.info("✅ Headless Graphics mode enabled")
         # Prebuild mesh if world already exists
         self._try_build_spawn_mesh()
+        # Start background meshing loop
+        if self._meshing_task is None:
+            self._meshing_task = asyncio.create_task(self._meshing_loop())
     
     def _try_build_spawn_mesh(self) -> None:
         if not self._gameplay_engine:
@@ -101,6 +108,46 @@ class GraphicsEngine:
                 self._voxel.load_mesh(pos, col)
         except Exception as e:
             self.logger.debug(f"Mesh build failed: {e}")
+    
+    async def _meshing_loop(self):
+        """Background loop to (re)build combined mesh for visible chunks."""
+        while True:
+            try:
+                await asyncio.sleep(0.5)
+                if not self._gameplay_engine:
+                    continue
+                # Rebuild if requested or periodically
+                if not self._mesh_rebuild_requested and self._positions is not None:
+                    continue
+                chunks = []
+                try:
+                    chunks = self._gameplay_engine.get_render_chunks()
+                except Exception:
+                    chunks = []
+                if not chunks:
+                    continue
+                # Combine meshes from chunks
+                combined_pos: List[float] = []
+                combined_col: List[float] = []
+                for (cx, cz, blocks) in chunks:
+                    try:
+                        pos, col = build_chunk_mesh_greedy(blocks)
+                        # Offset positions by chunk origin
+                        for i in range(0, len(pos), 3):
+                            combined_pos.extend([pos[i] + cx * 16, pos[i + 1], pos[i + 2] + cz * 16])
+                        combined_col.extend(col)
+                    except Exception:
+                        continue
+                if combined_pos:
+                    self._positions, self._colors = combined_pos, combined_col
+                    if self._voxel and self._voxel.available:
+                        self._voxel.load_mesh(combined_pos, combined_col)
+                self._mesh_rebuild_requested = False
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                self.logger.debug(f"Meshing loop error: {e}")
+                continue
     
     async def render(self):
         """Render the current frame."""
@@ -269,6 +316,8 @@ class GraphicsEngine:
     async def shutdown(self):
         self.logger.info("🔄 Shutting down Graphics Engine...")
         try:
+            if self._meshing_task:
+                self._meshing_task.cancel()
             if self._pygame is not None:
                 self._pygame.quit()
         except Exception:

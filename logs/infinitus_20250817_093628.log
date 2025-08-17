@@ -1,0 +1,3 @@
+2025-08-17 09:36:28,414 | INFO     | infinitus.main | logger.py:155 | 🌌 INFINITUS Logging System Initialized
+2025-08-17 09:36:28,414 | INFO     | infinitus.main | logger.py:155 | Log directory: /workspace/logs
+2025-08-17 09:36:28,415 | INFO     | infinitus.main | logger.py:155 | Log level: INFO
