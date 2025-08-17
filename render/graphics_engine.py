@@ -9,6 +9,7 @@ import os
 from typing import Dict, List, Any, Optional, Tuple
 
 from .mesh_builder import build_chunk_mesh
+from .greedy_mesher import build_chunk_mesh_greedy
 from .voxel_renderer import VoxelRenderer
 from .camera import FirstPersonCamera
 
@@ -79,7 +80,8 @@ class GraphicsEngine:
         chunk = spawn_chunks[key]
         blocks = chunk.get("blocks", [])
         try:
-            pos, col = build_chunk_mesh(blocks)
+            # Prefer greedy meshing for performance
+            pos, col = build_chunk_mesh_greedy(blocks)
             self._positions, self._colors = pos, col
             if self._voxel and self._voxel.available:
                 self._voxel.load_mesh(pos, col)
