@@ -10,6 +10,7 @@ from typing import Dict, List, Any, Optional, Tuple
 
 from .mesh_builder import build_chunk_mesh
 from .voxel_renderer import VoxelRenderer
+from .camera import FirstPersonCamera
 
 class GraphicsEngine:
     """Graphics and rendering system."""
@@ -28,6 +29,7 @@ class GraphicsEngine:
         self._voxel: Optional[VoxelRenderer] = None
         self._positions: Optional[List[float]] = None
         self._colors: Optional[List[float]] = None
+        self._camera: Optional[FirstPersonCamera] = None
     
     def set_gameplay_engine(self, engine: Any) -> None:
         self._gameplay_engine = engine
@@ -37,6 +39,7 @@ class GraphicsEngine:
         # Initialize 3D renderer (safe to fail)
         self._voxel = VoxelRenderer(self.config)
         self._voxel.initialize()
+        self._camera = FirstPersonCamera(self.config.graphics.fov, 0.1, 2000.0)
         # Lazy-import pygame to avoid dependency at import time
         try:
             import pygame
@@ -90,13 +93,21 @@ class GraphicsEngine:
             self._try_build_spawn_mesh()
         # If we have a 3D renderer, attempt 3D draw
         if self._voxel and self._voxel.available and self._positions:
-            # Minimal identity MVP (no camera yet)
-            mvp = (
-                1,0,0,0,
-                0,1,0,0,
-                0,0,1,0,
-                0,0,0,1,
-            )
+            # First-person camera MVP
+            width, height = self.config.graphics.resolution
+            if self._camera and self._gameplay_engine:
+                player = self._gameplay_engine.get_local_player()
+                if player:
+                    # Align camera to player position; simple yaw progression
+                    self._camera.set_pose((player.position[0], player.position[1], player.position[2]), 45.0, -15.0)
+                mvp = self._camera.view_projection_flat(width, height)
+            else:
+                mvp = (
+                    1,0,0,0,
+                    0,1,0,0,
+                    0,0,1,0,
+                    0,0,0,1,
+                )
             try:
                 self._voxel.render(mvp)
             except Exception as e:
