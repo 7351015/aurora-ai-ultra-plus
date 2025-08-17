@@ -29,6 +29,7 @@ class VoxelRenderer:
         self._vbo = None
         self._cbo = None
         self._nverts: int = 0
+        self._brightness: float = 1.0
 
     def initialize(self) -> None:
         try:
@@ -74,14 +75,19 @@ class VoxelRenderer:
         )
         self._nverts = len(positions) // 3
 
-    def render(self, view_proj: tuple[float, ...]) -> None:
+    def render(self, view_proj: tuple[float, ...], brightness: Optional[float] = None) -> None:
         if not self.available or self._vao is None:
             return
-        # Set uniform for MVP (expecting 4x4 matrix flattened)
+        # Set uniforms
         try:
             self._prog['u_mvp'].write(self._np.array(view_proj, dtype='f4').tobytes())
         except Exception:
-            # If uniform missing or wrong size, skip safely
+            pass
+        try:
+            if brightness is not None:
+                self._brightness = float(brightness)
+            self._prog['u_brightness'].value = self._brightness
+        except Exception:
             pass
         self._ctx.clear(0.05, 0.05, 0.1, 1.0)
         self._vao.render(self._mgl.TRIANGLES, vertices=self._nverts)
@@ -102,7 +108,8 @@ class VoxelRenderer:
         #version 330
         in vec3 v_col;
         out vec4 f_color;
+        uniform float u_brightness;
         void main() {
-            f_color = vec4(v_col, 1.0);
+            f_color = vec4(v_col * u_brightness, 1.0);
         }
     """

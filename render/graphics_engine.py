@@ -6,6 +6,7 @@ Advanced graphics and rendering system.
 import asyncio
 import logging
 import os
+import math
 from typing import Dict, List, Any, Optional, Tuple
 
 from .mesh_builder import build_chunk_mesh
@@ -129,7 +130,16 @@ class GraphicsEngine:
                     0,0,0,1,
                 )
             try:
-                self._voxel.render(mvp)
+                # Simple brightness from time-of-day (if available)
+                brightness = 1.0
+                try:
+                    if self._gameplay_engine and getattr(self._gameplay_engine, "_time_of_day", None) is not None:
+                        tod = float(self._gameplay_engine._time_of_day)
+                        # Peak at noon (~6000), dim at midnight
+                        brightness = 0.2 + 0.8 * max(0.0, math.cos((tod - 6000.0) * (3.14159/12000.0)))
+                except Exception:
+                    pass
+                self._voxel.render(mvp, brightness)
             except Exception as e:
                 self.logger.debug(f"3D render failed: {e}")
             await asyncio.sleep(0)
