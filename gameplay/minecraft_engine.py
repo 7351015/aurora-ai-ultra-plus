@@ -141,10 +141,14 @@ class MinecraftEngine:
                     if btn == "break":
                         # Set a center top block to air
                         self._set_demo_block(chunk_key, 8, 65, 8, BLOCK_AIR)
+                        if hasattr(self.graphics_engine, "refresh_world_mesh"):
+                            self.graphics_engine.refresh_world_mesh()
                     elif btn == "place":
                         # Place selected hotbar block id (map name->id)
                         block_id = self._selected_block_id(player)
                         self._set_demo_block(chunk_key, 8, 65, 8, block_id)
+                        if hasattr(self.graphics_engine, "refresh_world_mesh"):
+                            self.graphics_engine.refresh_world_mesh()
                 elif et == "hotbar":
                     delta = ev.get("delta", 0)
                     player.hotbar_index = (player.hotbar_index + int(delta)) % max(1, len(player.hotbar))

@@ -35,6 +35,12 @@ class GraphicsEngine:
     def set_gameplay_engine(self, engine: Any) -> None:
         self._gameplay_engine = engine
     
+    def refresh_world_mesh(self) -> None:
+        """Public method to rebuild world mesh on-demand (e.g., after block edits)."""
+        self._positions = None
+        self._colors = None
+        self._try_build_spawn_mesh()
+    
     async def initialize(self):
         self.logger.info("🔧 Initializing Graphics Engine...")
         # Initialize 3D renderer (safe to fail)
@@ -162,15 +168,32 @@ class GraphicsEngine:
                             h = max(0, min(255, int(highest_y)))
                             color = (h//2, h//3, h)
                             pygame.draw.rect(screen, color, (offset_x + x*tile, offset_y + z*tile, tile-1, tile-1))
-                    # Draw player
+                    # Draw player marker
                     player = self._gameplay_engine.get_local_player()
                     if player:
                         px, py, pz = player.position
                         pygame.draw.rect(screen, (255, 64, 64), (offset_x + (px%16)*tile, offset_y + (pz%16)*tile, tile-2, tile-2), 2)
-            # HUD
-            font = pygame.font.Font(None, 24)
-            text = font.render("INFINITUS - WASD/arrows to move (demo)", True, (240, 240, 240))
-            screen.blit(text, (20, 2))
+            # HUD: crosshair and hotbar
+            cx = screen.get_width() // 2
+            cy = screen.get_height() // 2
+            pygame.draw.line(screen, (240, 240, 240), (cx - 8, cy), (cx + 8, cy), 1)
+            pygame.draw.line(screen, (240, 240, 240), (cx, cy - 8), (cx, cy + 8), 1)
+            # Hotbar
+            player = self._gameplay_engine.get_local_player() if self._gameplay_engine else None
+            if player:
+                font = pygame.font.Font(None, 20)
+                items = player.hotbar
+                sel = player.hotbar_index
+                bar_w = 36 * max(1, len(items))
+                bar_x = (screen.get_width() - bar_w) // 2
+                bar_y = screen.get_height() - 48
+                for i, name in enumerate(items):
+                    x = bar_x + i * 36
+                    rect = pygame.Rect(x, bar_y, 32, 32)
+                    pygame.draw.rect(screen, (30, 30, 30), rect)
+                    pygame.draw.rect(screen, (200, 200, 200) if i == sel else (80, 80, 80), rect, 2)
+                    label = font.render(name[:5], True, (220, 220, 220))
+                    screen.blit(label, (x + 4, bar_y + 8))
         except Exception as e:
             # Keep rendering loop resilient
             self.logger.debug(f"Render warning: {e}")
