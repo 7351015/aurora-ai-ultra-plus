@@ -60,3 +60,22 @@ class MainMenu:
     async def handle_events(self) -> None:
         """Process UI events if any (placeholder)."""
         await asyncio.sleep(0)
+
+    # Additional UI hooks that gameplay can call
+    async def show_crafting(self, player_inventory: Dict[str, int], crafting_system) -> Optional[Dict[str, Any]]:
+        """Simulate crafting selection: try crafting a pickaxe if possible."""
+        # Prefer iron, then stone, then wood
+        for recipe in (["iron_ingot", "stick", "stick"], ["cobblestone", "stick", "stick"], ["planks", "stick", "stick"]):
+            if crafting_system.can_craft(player_inventory, recipe):
+                crafting_system.craft(player_inventory, recipe)
+                return {"crafted": True, "recipe": recipe}
+        return None
+
+    async def save_world(self, engine) -> bool:
+        try:
+            if hasattr(engine, "_do_autosave"):
+                await engine._do_autosave()
+                return True
+        except Exception:
+            return False
+        return False

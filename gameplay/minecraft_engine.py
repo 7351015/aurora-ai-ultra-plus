@@ -121,6 +121,11 @@ class MinecraftEngine:
         spawn = self.world_data["metadata"].get("spawn_point", (0.0, 80.0, 0.0))
         player_id = "local"
         self.players[player_id] = Player(player_id=player_id, name=name, position=tuple(spawn))
+        # Starter inventory for demonstration
+        p = self.players[player_id]
+        p.inventory.setdefault('wood_log', 3)
+        p.inventory.setdefault('cobblestone', 3)
+        p.inventory.setdefault('stick', 2)
         self.local_player_id = player_id
         # Create physics body
         if self.physics:
