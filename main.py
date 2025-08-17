@@ -9,11 +9,12 @@ import sys
 import time
 import threading
 from pathlib import Path
+import os
 
 # Core game imports
 from core_engine.game_engine import GameEngine
 from core_engine.config import GameConfig
-from core_engine.logger import GameLogger
+from core_engine.logger import setup_logging, get_logger
 from render.graphics_engine import GraphicsEngine
 from world_gen.world_generator import WorldGenerator
 from gameplay.minecraft_engine import MinecraftEngine
@@ -25,7 +26,8 @@ class InfinitusGame:
     
     def __init__(self):
         self.config = GameConfig()
-        self.logger = GameLogger()
+        # Initialize logging globally for all subsystems
+        self.logger = setup_logging()
         self.running = False
         self.game_engine = None
         self.graphics_engine = None
@@ -40,23 +42,27 @@ class InfinitusGame:
             self.logger.info("🚀 Initializing INFINITUS - Next Gen Minecraft 2025")
             
             # Initialize core systems
-            self.game_engine = GameEngine(self.config, self.logger)
+            self.game_engine = GameEngine(self.config)
             await self.game_engine.initialize()
             
             # Initialize graphics engine
-            self.graphics_engine = GraphicsEngine(self.config, self.logger)
+            self.graphics_engine = GraphicsEngine(self.config)
             await self.graphics_engine.initialize()
             
             # Initialize world generator
-            self.world_generator = WorldGenerator(self.config, self.logger)
+            self.world_generator = WorldGenerator(self.config)
             await self.world_generator.initialize()
             
             # Initialize Minecraft-style gameplay engine
             self.minecraft_engine = MinecraftEngine(self.config, self.logger, self.graphics_engine)
             await self.minecraft_engine.initialize()
             
+            # Bind gameplay to graphics for input/render context
+            if hasattr(self.graphics_engine, "set_gameplay_engine"):
+                self.graphics_engine.set_gameplay_engine(self.minecraft_engine)
+            
             # Initialize networking
-            self.network_manager = NetworkManager(self.config, self.logger)
+            self.network_manager = NetworkManager(self.config)
             await self.network_manager.initialize()
             
             # Initialize UI
@@ -146,7 +152,14 @@ class InfinitusGame:
         """
         
         print(splash_art)
-        input()  # Wait for user input
+        # Avoid blocking input in non-interactive/headless environments
+        try:
+            if sys.stdin and sys.stdin.isatty():
+                input()
+            else:
+                await asyncio.sleep(0.5)
+        except Exception:
+            await asyncio.sleep(0.5)
     
     async def start_singleplayer(self):
         """Start singleplayer game"""
@@ -190,9 +203,9 @@ class InfinitusGame:
         world_params = await self.main_menu.get_world_creation_params()
         
         # Generate world
-        world = await self.world_generator.create_custom_world(world_params)
+        created = await self.world_generator.create_custom_world(world_params)
         
-        self.logger.info(f"✅ World '{world.name}' created successfully")
+        self.logger.info(f"✅ World '{created.name}' created successfully")
     
     async def show_settings(self):
         """Show game settings"""
