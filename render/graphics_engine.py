@@ -204,6 +204,17 @@ class GraphicsEngine:
                     pygame.draw.rect(screen, (200, 200, 200) if i == sel else (80, 80, 80), rect, 2)
                     label = font.render(name[:5], True, (220, 220, 220))
                     screen.blit(label, (x + 4, bar_y + 8))
+                # Overlay (coords, FPS, time-of-day)
+                try:
+                    font_small = pygame.font.Font(None, 18)
+                    fps = self._clock.get_fps() if self._clock else 0.0
+                    tod = 0.0
+                    if hasattr(self._gameplay_engine, "_time_of_day"):
+                        tod = float(self._gameplay_engine._time_of_day)
+                    overlay = f"XYZ: {player.position[0]:.1f} {player.position[1]:.1f} {player.position[2]:.1f}  |  FPS: {fps:.1f}  |  TOD: {tod:.0f}"
+                    screen.blit(font_small.render(overlay, True, (230, 230, 230)), (8, 8))
+                except Exception:
+                    pass
         except Exception as e:
             # Keep rendering loop resilient
             self.logger.debug(f"Render warning: {e}")
