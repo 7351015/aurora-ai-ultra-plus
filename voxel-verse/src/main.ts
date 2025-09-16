@@ -38,8 +38,42 @@ sun.castShadow = false
 scene.add(sun)
 scene.add(new THREE.AmbientLight(0xffffff, 0.4))
 
+// Day/Night cycle & water
+let worldTime = 0
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.4)
+scene.add(ambientLight)
+const waterLevel = 12
+const water = new THREE.Mesh(
+  new THREE.PlaneGeometry(2048, 2048, 1, 1),
+  new THREE.MeshPhongMaterial({ color: 0x3366cc, transparent: true, opacity: 0.55, shininess: 60 })
+)
+water.rotation.x = -Math.PI / 2
+water.position.y = waterLevel + 0.01
+water.receiveShadow = false
+water.renderOrder = -1
+scene.add(water)
+
 // Terrain generation & Voxel world
-type Voxel = 0 | 1
+type Voxel = 0 | 1 | 2 | 3 | 4 | 5
+
+const BLOCK = {
+  Air: 0 as Voxel,
+  Grass: 1 as Voxel,
+  Dirt: 2 as Voxel,
+  Stone: 3 as Voxel,
+  Log: 4 as Voxel,
+  Sand: 5 as Voxel,
+}
+
+const blockColors: Record<number, number> = {
+  [BLOCK.Air]: 0x000000,
+  [BLOCK.Grass]: 0x55aa55,
+  [BLOCK.Dirt]: 0x8b5a2b,
+  [BLOCK.Stone]: 0x777777,
+  [BLOCK.Log]: 0xa07040,
+  [BLOCK.Sand]: 0xd8c17a,
+}
+let selectedBlock: Voxel = BLOCK.Grass
 
 interface ChunkConfig {
   sizeX: number
@@ -75,8 +109,15 @@ class Chunk {
         const n = (noise2D(wx / 64, wz / 64) + 1) * 0.5
         const h = Math.floor(8 + n * 24) // height 8..32
         for (let y = 0; y < sizeY; y++) {
-          const isSolid: Voxel = y <= h ? 1 : 0
-          this.voxels[this.index(x, y, z)] = isSolid
+          let voxelType: Voxel = BLOCK.Air
+          if (y <= h) {
+            if (y === h) {
+              if (h <= waterLevel + 1) voxelType = BLOCK.Sand
+              else voxelType = BLOCK.Grass
+            } else if (y < h - 3) voxelType = BLOCK.Stone
+            else voxelType = BLOCK.Dirt
+          }
+          this.voxels[this.index(x, y, z)] = voxelType
         }
       }
     }
@@ -85,7 +126,7 @@ class Chunk {
   private isSolid(x: number, y: number, z: number): boolean {
     const { sizeX, sizeY, sizeZ } = this.config
     if (x < 0 || y < 0 || z < 0 || x >= sizeX || y >= sizeY || z >= sizeZ) return false
-    return this.voxels[this.index(x, y, z)] === 1
+    return this.voxels[this.index(x, y, z)] !== 0
   }
 
   private buildMesh() {
@@ -93,6 +134,7 @@ class Chunk {
     const normals: number[] = []
     const uvs: number[] = []
     const indices: number[] = []
+    const colors: number[] = []
 
     const pushFace = (
       x: number, y: number, z: number,
@@ -104,6 +146,9 @@ class Chunk {
         positions.push(x + cx, y + cy, z + cz)
         normals.push(nx, ny, nz)
         uvs.push(cx, cz)
+        const type = this.voxels[this.index(x, y, z)]
+        const color = new THREE.Color(blockColors[type] ?? 0xffffff)
+        colors.push(color.r, color.g, color.b)
       }
       indices.push(baseIndex, baseIndex + 1, baseIndex + 2, baseIndex, baseIndex + 2, baseIndex + 3)
     }
@@ -139,10 +184,11 @@ class Chunk {
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
     geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
     geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
     geometry.setIndex(indices)
     geometry.computeBoundingSphere()
 
-    const material = new THREE.MeshStandardMaterial({ color: 0x55aa55, flatShading: true })
+    const material = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true })
     this.mesh = new THREE.Mesh(geometry, material)
     this.mesh.receiveShadow = false
     this.mesh.castShadow = false
@@ -177,10 +223,12 @@ class World {
   private readonly scene: THREE.Scene
   private readonly chunks = new Map<string, Chunk>()
   private readonly active = new Set<string>()
+  private readonly edits: { x: number, y: number, z: number, v: Voxel }[] = []
 
   constructor(scene: THREE.Scene) {
     this.scene = scene
     this.noise2D = createNoise2D(Math.random)
+    this.loadEdits()
   }
 
   private key(cx: number, cz: number): string { return `${cx},${cz}` }
@@ -196,6 +244,19 @@ class World {
     const worldX = cx * sizeX
     const worldZ = cz * sizeZ
     const chunk = new Chunk({ sizeX, sizeY, sizeZ, worldX, worldZ }, this.noise2D)
+    // Apply any saved edits for this chunk
+    for (const e of this.edits) {
+      if (
+        e.x >= worldX && e.x < worldX + sizeX &&
+        e.z >= worldZ && e.z < worldZ + sizeZ &&
+        e.y >= 0 && e.y < sizeY
+      ) {
+        const lx = e.x - worldX
+        const lz = e.z - worldZ
+        chunk.setVoxel(lx, e.y, lz, e.v)
+      }
+    }
+    chunk.rebuildMesh()
     if (chunk.mesh) {
       chunk.mesh.position.set(worldX, 0, worldZ)
       this.scene.add(chunk.mesh)
@@ -259,6 +320,7 @@ class World {
       chunk.mesh.position.set(cx * this.chunkSize, 0, cz * this.chunkSize)
       this.scene.add(chunk.mesh)
     }
+    this.recordEdit(worldX, Math.floor(worldY), worldZ, value)
   }
 
   public raycastFrom(_camera: THREE.Camera, raycaster: THREE.Raycaster): THREE.Intersection | null {
@@ -267,6 +329,30 @@ class World {
     for (const ch of this.chunks.values()) if (ch.mesh) meshes.push(ch.mesh)
     const hits = raycaster.intersectObjects(meshes, false)
     return hits.length > 0 ? hits[0] : null
+  }
+
+  private saveEdits(): void {
+    try {
+      localStorage.setItem('voxel_edits', JSON.stringify(this.edits))
+    } catch {}
+  }
+
+  private loadEdits(): void {
+    try {
+      const raw = localStorage.getItem('voxel_edits')
+      if (raw) {
+        const arr = JSON.parse(raw) as { x: number, y: number, z: number, v: Voxel }[]
+        this.edits.splice(0, this.edits.length, ...arr)
+      }
+    } catch {}
+  }
+
+  private recordEdit(x: number, y: number, z: number, v: Voxel): void {
+    // Deduplicate by same coord
+    const idx = this.edits.findIndex(e => e.x === x && e.y === y && e.z === z)
+    if (idx >= 0) this.edits[idx].v = v
+    else this.edits.push({ x, y, z, v })
+    this.saveEdits()
   }
 }
 
@@ -299,8 +385,8 @@ document.addEventListener('mousemove', (event) => {
   if (!isLocked) return
   const movementX = event.movementX || 0
   const movementY = event.movementY || 0
-  yaw -= movementX * 0.0025
-  pitch -= movementY * 0.0025
+  yaw -= movementX * (0.003 * mouseSensitivity)
+  pitch -= movementY * (0.003 * mouseSensitivity)
   const maxPitch = Math.PI / 2 - 0.01
   pitch = Math.max(-maxPitch, Math.min(maxPitch, pitch))
 })
@@ -311,6 +397,11 @@ document.addEventListener('keydown', (e) => {
     case 'KeyS': moveBackward.state = true; break
     case 'KeyA': moveLeft.state = true; break
     case 'KeyD': moveRight.state = true; break
+    case 'Digit1': selectedBlock = BLOCK.Grass; updateHotbar(); break
+    case 'Digit2': selectedBlock = BLOCK.Dirt; updateHotbar(); break
+    case 'Digit3': selectedBlock = BLOCK.Stone; updateHotbar(); break
+    case 'Digit4': selectedBlock = BLOCK.Log; updateHotbar(); break
+    case 'Digit5': selectedBlock = BLOCK.Sand; updateHotbar(); break
   }
 })
 
@@ -326,7 +417,7 @@ document.addEventListener('keyup', (e) => {
 // Prevent context menu on right-click for placement
 document.addEventListener('contextmenu', (e) => { if (isLocked) e.preventDefault() })
 
-// Selection highlight
+// Selection highlight & hotbar
 const selectionMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true, transparent: true, opacity: 0.8 })
 const selectionMesh = new THREE.Mesh(new THREE.BoxGeometry(1.01, 1.01, 1.01), selectionMaterial)
 selectionMesh.visible = false
@@ -375,14 +466,63 @@ function interact(button: number): void {
     const wx = Math.floor(meshPos.x) + Math.floor(p.x)
     const wy = Math.floor(p.y)
     const wz = Math.floor(meshPos.z) + Math.floor(p.z)
-    world.setVoxelAtWorld(wx, wy, wz, 1)
+    world.setVoxelAtWorld(wx, wy, wz, selectedBlock)
   }
 }
 
 document.addEventListener('mousedown', (e) => {
   if (!isLocked) return
-  if (e.button === 0 || e.button === 2) interact(e.button)
+  if (modeCombat) {
+    if (e.button === 0) shootWithAudio()
+  } else {
+    if (e.button === 0 || e.button === 2) interactWithAudio(e.button)
+  }
 })
+
+// Combat: hitscan shooting and simple enemies
+const enemies: THREE.Mesh[] = []
+function spawnEnemy(x: number, y: number, z: number) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.6, 0.8), new THREE.MeshStandardMaterial({ color: 0xcc4444 }))
+  m.position.set(x, y, z)
+  scene.add(m)
+  enemies.push(m)
+}
+for (let i = 0; i < 5; i++) spawnEnemy((Math.random() - 0.5) * 40, 20, (Math.random() - 0.5) * 40)
+
+const muzzleFlashMat = new THREE.MeshBasicMaterial({ color: 0xffffaa })
+const muzzleFlash = new THREE.Mesh(new THREE.SphereGeometry(0.06), muzzleFlashMat)
+muzzleFlash.visible = false
+scene.add(muzzleFlash)
+
+function shoot() {
+  muzzleFlash.position.copy(camera.position)
+  muzzleFlash.visible = true
+  setTimeout(() => (muzzleFlash.visible = false), 50)
+  const shootRay = new THREE.Raycaster()
+  shootRay.setFromCamera(new THREE.Vector2(0, 0), camera)
+  // Hit enemies first
+  const enemyHits = shootRay.intersectObjects(enemies, false)
+  if (enemyHits.length > 0) {
+    const h = enemyHits[0]
+    const obj = h.object
+    obj.parent?.remove(obj)
+    const idx = enemies.indexOf(obj as THREE.Mesh)
+    if (idx >= 0) enemies.splice(idx, 1)
+    return
+  }
+  // Otherwise interact with world (remove block)
+  const hit = world.raycastFrom(camera, shootRay)
+  if (hit && hit.face && (hit.object as any).userData.chunk) {
+    const meshPos = hit.object.position as THREE.Vector3
+    const faceNormal = hit.face.normal.clone().applyMatrix3(new THREE.Matrix3().getNormalMatrix((hit.object as THREE.Object3D).matrixWorld)).normalize()
+    const localPoint = hit.point.clone().sub(meshPos)
+    const p = localPoint.clone().addScaledVector(faceNormal, -0.01)
+    const wx = Math.floor(meshPos.x) + Math.floor(p.x)
+    const wy = Math.floor(p.y)
+    const wz = Math.floor(meshPos.z) + Math.floor(p.z)
+    world.setVoxelAtWorld(wx, wy, wz, 0)
+  }
+}
 
 function updateCamera(dt: number) {
   // Set rotation from yaw/pitch
@@ -401,7 +541,7 @@ function updateCamera(dt: number) {
   const yawQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw)
   direction.applyQuaternion(yawQuat)
 
-  const speed = 20
+  const speed = moveSpeed
   velocity.x = direction.x * speed
   velocity.z = direction.z * speed
 
@@ -423,6 +563,14 @@ function animate() {
   const now = performance.now()
   const dt = Math.min(0.05, (now - last) / 1000)
   last = now
+  // Day-night progression
+  worldTime += dt * 0.05
+  const dayPhase = (Math.sin(worldTime) + 1) * 0.5
+  ambientLight.intensity = 0.2 + dayPhase * 0.6
+  sun.intensity = 1.0 + dayPhase
+  const angle = worldTime * 0.5
+  sun.position.set(Math.cos(angle) * 200, 100 + Math.sin(angle) * 150, Math.sin(angle) * 200)
+  water.material.opacity = 0.45 + 0.1 * Math.sin(worldTime * 1.5)
   world.updateStreaming(camera.position, 2)
   updateSelection()
   updateCamera(dt)
@@ -437,3 +585,54 @@ window.addEventListener('resize', () => {
   camera.updateProjectionMatrix()
   renderer.setSize(window.innerWidth, window.innerHeight)
 })
+
+// Minimal audio cues
+let audioCtx: AudioContext | null = null
+function ensureAudio() { if (!audioCtx) audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)() }
+function playClick() {
+  ensureAudio(); if (!audioCtx) return
+  const o = audioCtx.createOscillator(); const g = audioCtx.createGain()
+  o.frequency.value = 660; g.gain.value = 0.1
+  o.connect(g); g.connect(audioCtx.destination)
+  o.start(); setTimeout(() => { o.stop(); g.disconnect() }, 80)
+}
+function playShoot() {
+  ensureAudio(); if (!audioCtx) return
+  const o = audioCtx.createOscillator(); const g = audioCtx.createGain()
+  o.type = 'square'; o.frequency.value = 220; g.gain.value = 0.08
+  o.connect(g); g.connect(audioCtx.destination)
+  o.start(); setTimeout(() => { o.stop(); g.disconnect() }, 60)
+}
+
+// Hook audio into interactions
+const interactWithAudio = (button: number) => { playClick(); interact(button) }
+const shootWithAudio = () => { playShoot(); shoot() }
+
+// Hotbar UI
+const hotbar = document.getElementById('hotbar')
+function updateHotbar() {
+  if (!hotbar) return
+  for (const el of Array.from(hotbar.querySelectorAll('.slot'))) {
+    const type = parseInt((el as HTMLElement).dataset.type || '0')
+    ;(el as HTMLElement).style.borderColor = type === selectedBlock ? '#fff' : '#888'
+  }
+}
+updateHotbar()
+
+// Settings and modes
+let modeCombat = false
+const modeEl = document.getElementById('mode') as HTMLElement | null
+const settingsEl = document.getElementById('settings') as HTMLElement | null
+const sensitivityEl = document.getElementById('sensitivity') as HTMLInputElement | null
+const moveSpeedEl = document.getElementById('movespeed') as HTMLInputElement | null
+let mouseSensitivity = sensitivityEl ? parseFloat(sensitivityEl.value) : 0.5
+let moveSpeed = moveSpeedEl ? parseFloat(moveSpeedEl.value) : 20
+
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'KeyB') { modeCombat = false; if (modeEl) modeEl.textContent = 'Mode: Build' }
+  if (e.code === 'KeyF') { modeCombat = true; if (modeEl) modeEl.textContent = 'Mode: Combat' }
+  if (e.code === 'KeyP') { if (settingsEl) settingsEl.style.display = settingsEl.style.display === 'none' ? 'block' : 'none' }
+})
+
+if (sensitivityEl) sensitivityEl.addEventListener('input', () => { mouseSensitivity = parseFloat(sensitivityEl!.value) })
+if (moveSpeedEl) moveSpeedEl.addEventListener('input', () => { moveSpeed = parseFloat(moveSpeedEl!.value) })
