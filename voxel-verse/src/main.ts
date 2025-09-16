@@ -38,7 +38,7 @@ sun.castShadow = false
 scene.add(sun)
 scene.add(new THREE.AmbientLight(0xffffff, 0.4))
 
-// Terrain generation
+// Terrain generation & Voxel world
 type Voxel = 0 | 1
 
 interface ChunkConfig {
@@ -146,41 +146,132 @@ class Chunk {
     this.mesh = new THREE.Mesh(geometry, material)
     this.mesh.receiveShadow = false
     this.mesh.castShadow = false
+    ;(this.mesh as any).userData.chunk = this
+  }
+
+  public setVoxel(localX: number, localY: number, localZ: number, value: Voxel): void {
+    const { sizeX, sizeY, sizeZ } = this.config
+    if (localX < 0 || localY < 0 || localZ < 0 || localX >= sizeX || localY >= sizeY || localZ >= sizeZ) return
+    this.voxels[this.index(localX, localY, localZ)] = value
+  }
+
+  public getVoxel(localX: number, localY: number, localZ: number): Voxel {
+    const { sizeX, sizeY, sizeZ } = this.config
+    if (localX < 0 || localY < 0 || localZ < 0 || localX >= sizeX || localY >= sizeY || localZ >= sizeZ) return 0
+    return this.voxels[this.index(localX, localY, localZ)] as Voxel
+  }
+
+  public rebuildMesh(): void {
+    if (this.mesh) {
+      if (this.mesh.parent) this.mesh.parent.remove(this.mesh)
+      this.mesh.geometry.dispose()
+    }
+    this.buildMesh()
   }
 }
 
 class World {
-  private chunks: Chunk[] = []
-  private noise2D: (x: number, y: number) => number
-  private chunkSize = 16
-  private height = 48
+  public readonly chunkSize = 16
+  public readonly height = 64
+  private readonly noise2D: (x: number, y: number) => number
+  private readonly scene: THREE.Scene
+  private readonly chunks = new Map<string, Chunk>()
+  private readonly active = new Set<string>()
 
-  constructor() {
-    this.noise2D = createNoise2D(() => 0.5)
+  constructor(scene: THREE.Scene) {
+    this.scene = scene
+    this.noise2D = createNoise2D(Math.random)
   }
 
-  buildAround(originX: number, originZ: number) {
-    const radius = 2 // builds (2*radius+1)^2 chunks
+  private key(cx: number, cz: number): string { return `${cx},${cz}` }
+  private toChunkCoord(worldCoord: number): number { return Math.floor(worldCoord / this.chunkSize) }
+  private positiveMod(n: number, mod: number): number { return ((n % mod) + mod) % mod }
+
+  private loadChunk(cx: number, cz: number): void {
+    const k = this.key(cx, cz)
+    if (this.chunks.has(k)) return
     const sizeX = this.chunkSize
     const sizeZ = this.chunkSize
     const sizeY = this.height
-    for (let cz = -radius; cz <= radius; cz++) {
-      for (let cx = -radius; cx <= radius; cx++) {
-        const worldX = Math.floor(originX / sizeX) * sizeX + cx * sizeX
-        const worldZ = Math.floor(originZ / sizeZ) * sizeZ + cz * sizeZ
-        const chunk = new Chunk({ sizeX, sizeY, sizeZ, worldX, worldZ }, this.noise2D)
-        if (chunk.mesh) {
-          chunk.mesh.position.set(worldX, 0, worldZ)
-          scene.add(chunk.mesh)
-        }
-        this.chunks.push(chunk)
+    const worldX = cx * sizeX
+    const worldZ = cz * sizeZ
+    const chunk = new Chunk({ sizeX, sizeY, sizeZ, worldX, worldZ }, this.noise2D)
+    if (chunk.mesh) {
+      chunk.mesh.position.set(worldX, 0, worldZ)
+      this.scene.add(chunk.mesh)
+    }
+    this.chunks.set(k, chunk)
+  }
+
+  private unloadChunk(cx: number, cz: number): void {
+    const k = this.key(cx, cz)
+    const chunk = this.chunks.get(k)
+    if (!chunk) return
+    if (chunk.mesh) {
+      this.scene.remove(chunk.mesh)
+      chunk.mesh.geometry.dispose()
+      ;(chunk.mesh.material as THREE.Material).dispose()
+    }
+    this.chunks.delete(k)
+  }
+
+  public updateStreaming(cameraPosition: THREE.Vector3, radius: number = 2): void {
+    const centerCX = this.toChunkCoord(cameraPosition.x)
+    const centerCZ = this.toChunkCoord(cameraPosition.z)
+    const needed = new Set<string>()
+    for (let dz = -radius; dz <= radius; dz++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        const cx = centerCX + dx
+        const cz = centerCZ + dz
+        const k = this.key(cx, cz)
+        needed.add(k)
+        if (!this.chunks.has(k)) this.loadChunk(cx, cz)
       }
     }
+    // Unload not-needed
+    for (const k of this.chunks.keys()) {
+      if (!needed.has(k)) {
+        const [sx, sz] = k.split(',')
+        this.unloadChunk(parseInt(sx), parseInt(sz))
+      }
+    }
+    this.active.clear()
+    for (const k of needed) this.active.add(k)
+  }
+
+  public getChunkAtWorld(worldX: number, worldZ: number): { chunk: Chunk | null, localX: number, localZ: number, cx: number, cz: number } {
+    const cx = this.toChunkCoord(worldX)
+    const cz = this.toChunkCoord(worldZ)
+    const k = this.key(cx, cz)
+    const chunk = this.chunks.get(k) ?? null
+    const localX = this.positiveMod(Math.floor(worldX - cx * this.chunkSize), this.chunkSize)
+    const localZ = this.positiveMod(Math.floor(worldZ - cz * this.chunkSize), this.chunkSize)
+    return { chunk, localX, localZ, cx, cz }
+  }
+
+  public setVoxelAtWorld(worldX: number, worldY: number, worldZ: number, value: Voxel): void {
+    const { chunk, localX, localZ, cx, cz } = this.getChunkAtWorld(worldX, worldZ)
+    if (!chunk) { this.loadChunk(cx, cz); return this.setVoxelAtWorld(worldX, worldY, worldZ, value) }
+    if (worldY < 0 || worldY >= this.height) return
+    chunk.setVoxel(localX, Math.floor(worldY), localZ, value)
+    chunk.rebuildMesh()
+    if (chunk.mesh) {
+      chunk.mesh.position.set(cx * this.chunkSize, 0, cz * this.chunkSize)
+      this.scene.add(chunk.mesh)
+    }
+  }
+
+  public raycastFrom(_camera: THREE.Camera, raycaster: THREE.Raycaster): THREE.Intersection | null {
+    // Collect chunk meshes only
+    const meshes: THREE.Object3D[] = []
+    for (const ch of this.chunks.values()) if (ch.mesh) meshes.push(ch.mesh)
+    const hits = raycaster.intersectObjects(meshes, false)
+    return hits.length > 0 ? hits[0] : null
   }
 }
 
-const world = new World()
-world.buildAround(0, 0)
+const world = new World(scene)
+world.updateStreaming(camera.position)
 
 // Simple FPS controls with Pointer Lock
 let isLocked = false
@@ -232,6 +323,67 @@ document.addEventListener('keyup', (e) => {
   }
 })
 
+// Prevent context menu on right-click for placement
+document.addEventListener('contextmenu', (e) => { if (isLocked) e.preventDefault() })
+
+// Selection highlight
+const selectionMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true, transparent: true, opacity: 0.8 })
+const selectionMesh = new THREE.Mesh(new THREE.BoxGeometry(1.01, 1.01, 1.01), selectionMaterial)
+selectionMesh.visible = false
+scene.add(selectionMesh)
+
+const raycaster = new THREE.Raycaster()
+raycaster.far = 8
+
+function updateSelection(): void {
+  raycaster.setFromCamera(new THREE.Vector2(0, 0), camera)
+  const hit = world.raycastFrom(camera, raycaster)
+  if (!hit || !hit.face || !(hit.object as any).userData.chunk) { selectionMesh.visible = false; return }
+  // access chunk to avoid tree-shaken unused warning in dev tooling
+  if ((hit.object as any).userData.chunk) {
+    // no-op
+  }
+  const meshPos = hit.object.position as THREE.Vector3
+  const faceNormal = hit.face.normal.clone().applyMatrix3(new THREE.Matrix3().getNormalMatrix((hit.object as THREE.Object3D).matrixWorld))
+  // Remove target (inside), place target (outside)
+  const localPoint = hit.point.clone().sub(meshPos)
+  const removePoint = localPoint.clone().addScaledVector(faceNormal, -0.01)
+  const rx = Math.floor(removePoint.x)
+  const ry = Math.floor(removePoint.y)
+  const rz = Math.floor(removePoint.z)
+  selectionMesh.position.set(Math.floor(meshPos.x) + rx + 0.5, ry + 0.5, Math.floor(meshPos.z) + rz + 0.5)
+  selectionMesh.visible = ry >= 0 && ry < world.height
+}
+
+function interact(button: number): void {
+  raycaster.setFromCamera(new THREE.Vector2(0, 0), camera)
+  const hit = world.raycastFrom(camera, raycaster)
+  if (!hit || !hit.face || !(hit.object as any).userData.chunk) return
+  const meshPos = hit.object.position as THREE.Vector3
+  const faceNormal = hit.face.normal.clone().applyMatrix3(new THREE.Matrix3().getNormalMatrix((hit.object as THREE.Object3D).matrixWorld)).normalize()
+  const localPoint = hit.point.clone().sub(meshPos)
+  if (button === 0) {
+    // Remove block
+    const p = localPoint.clone().addScaledVector(faceNormal, -0.01)
+    const wx = Math.floor(meshPos.x) + Math.floor(p.x)
+    const wy = Math.floor(p.y)
+    const wz = Math.floor(meshPos.z) + Math.floor(p.z)
+    world.setVoxelAtWorld(wx, wy, wz, 0)
+  } else if (button === 2) {
+    // Place block adjacent
+    const p = localPoint.clone().addScaledVector(faceNormal, 0.51)
+    const wx = Math.floor(meshPos.x) + Math.floor(p.x)
+    const wy = Math.floor(p.y)
+    const wz = Math.floor(meshPos.z) + Math.floor(p.z)
+    world.setVoxelAtWorld(wx, wy, wz, 1)
+  }
+}
+
+document.addEventListener('mousedown', (e) => {
+  if (!isLocked) return
+  if (e.button === 0 || e.button === 2) interact(e.button)
+})
+
 function updateCamera(dt: number) {
   // Set rotation from yaw/pitch
   const quaternion = new THREE.Quaternion()
@@ -271,6 +423,8 @@ function animate() {
   const now = performance.now()
   const dt = Math.min(0.05, (now - last) / 1000)
   last = now
+  world.updateStreaming(camera.position, 2)
+  updateSelection()
   updateCamera(dt)
   renderer.render(scene, camera)
   requestAnimationFrame(animate)
