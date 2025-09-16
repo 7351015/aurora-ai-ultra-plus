@@ -1,6 +1,8 @@
 import './style.css'
 import * as THREE from 'three'
 import { createNoise2D } from 'simplex-noise'
+// @ts-ignore - web worker loader via Vite
+import MesherWorkerUrl from './mesher.worker.ts?worker&url'
 
 const appRoot = document.querySelector<HTMLDivElement>('#app')!
 
@@ -87,6 +89,7 @@ class Chunk {
   public mesh: THREE.Mesh | null = null
   private voxels: Uint8Array
   private config: ChunkConfig
+  private worker: Worker | null = null
 
   constructor(config: ChunkConfig, noise2D: (x: number, y: number) => number) {
     this.config = config
@@ -107,12 +110,18 @@ class Chunk {
         const wx = worldX + x
         const wz = worldZ + z
         const n = (noise2D(wx / 64, wz / 64) + 1) * 0.5
-        const h = Math.floor(8 + n * 24) // height 8..32
+        const e = (noise2D(wx / 128, wz / 128) + 1) * 0.5
+        const h = Math.floor(8 + n * 24 + e * 8) // varied terrain
+        const moisture = (noise2D((wx+1000) / 200, (wz+1000) / 200) + 1) * 0.5
+        // 0: plains, 1: desert, 2: forest
+        let biome = 0
+        if (moisture < 0.3) biome = 1
+        else if (moisture > 0.65) biome = 2
         for (let y = 0; y < sizeY; y++) {
           let voxelType: Voxel = BLOCK.Air
           if (y <= h) {
             if (y === h) {
-              if (h <= waterLevel + 1) voxelType = BLOCK.Sand
+              if (biome === 1 || h <= waterLevel + 1) voxelType = BLOCK.Sand
               else voxelType = BLOCK.Grass
             } else if (y < h - 3) voxelType = BLOCK.Stone
             else voxelType = BLOCK.Dirt
@@ -123,76 +132,34 @@ class Chunk {
     }
   }
 
-  private isSolid(x: number, y: number, z: number): boolean {
-    const { sizeX, sizeY, sizeZ } = this.config
-    if (x < 0 || y < 0 || z < 0 || x >= sizeX || y >= sizeY || z >= sizeZ) return false
-    return this.voxels[this.index(x, y, z)] !== 0
-  }
+  // removed unused isSolid to satisfy TS strict
 
   private buildMesh() {
-    const positions: number[] = []
-    const normals: number[] = []
-    const uvs: number[] = []
-    const indices: number[] = []
-    const colors: number[] = []
-
-    const pushFace = (
-      x: number, y: number, z: number,
-      nx: number, ny: number, nz: number,
-      corners: [number, number, number][]
-    ) => {
-      const baseIndex = positions.length / 3
-      for (const [cx, cy, cz] of corners) {
-        positions.push(x + cx, y + cy, z + cz)
-        normals.push(nx, ny, nz)
-        uvs.push(cx, cz)
-        const type = this.voxels[this.index(x, y, z)]
-        const color = new THREE.Color(blockColors[type] ?? 0xffffff)
-        colors.push(color.r, color.g, color.b)
-      }
-      indices.push(baseIndex, baseIndex + 1, baseIndex + 2, baseIndex, baseIndex + 2, baseIndex + 3)
-    }
-
+    // Offload meshing to worker using greedy mesher
+    if (!this.worker) this.worker = new Worker(MesherWorkerUrl, { type: 'module' })
     const { sizeX, sizeY, sizeZ } = this.config
-    for (let z = 0; z < sizeZ; z++) {
-      for (let y = 0; y < sizeY; y++) {
-        for (let x = 0; x < sizeX; x++) {
-          if (!this.isSolid(x, y, z)) continue
-          // -X
-          if (!this.isSolid(x - 1, y, z))
-            pushFace(x, y, z, -1, 0, 0, [ [0,0,1], [0,1,1], [0,1,0], [0,0,0] ])
-          // +X
-          if (!this.isSolid(x + 1, y, z))
-            pushFace(x + 1, y, z, 1, 0, 0, [ [0,0,0], [0,1,0], [0,1,1], [0,0,1] ])
-          // -Y
-          if (!this.isSolid(x, y - 1, z))
-            pushFace(x, y, z, 0, -1, 0, [ [0,0,0], [1,0,0], [1,0,1], [0,0,1] ])
-          // +Y
-          if (!this.isSolid(x, y + 1, z))
-            pushFace(x, y + 1, z, 0, 1, 0, [ [0,0,1], [1,0,1], [1,0,0], [0,0,0] ])
-          // -Z
-          if (!this.isSolid(x, y, z - 1))
-            pushFace(x, y, z, 0, 0, -1, [ [1,0,0], [1,1,0], [0,1,0], [0,0,0] ])
-          // +Z
-          if (!this.isSolid(x, y, z + 1))
-            pushFace(x, y, z + 1, 0, 0, 1, [ [0,0,0], [0,1,0], [1,1,0], [1,0,0] ])
-        }
+    const message = { sizeX, sizeY, sizeZ, voxels: this.voxels.buffer.slice(0), blockColors: Object.values(blockColors) }
+    this.worker.onmessage = (ev: MessageEvent<any>) => {
+      const { positions, normals, colors, uvs, indices } = ev.data
+      const geometry = new THREE.BufferGeometry()
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+      geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
+      geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
+      geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
+      geometry.setIndex(new THREE.BufferAttribute(indices, 1))
+      geometry.computeBoundingSphere()
+      const material = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true })
+      const newMesh = new THREE.Mesh(geometry, material)
+      newMesh.receiveShadow = false
+      newMesh.castShadow = false
+      ;(newMesh as any).userData.chunk = this
+      if (this.mesh && this.mesh.parent) this.mesh.parent.remove(this.mesh)
+      this.mesh = newMesh
+      if (this.mesh && (this.mesh as any).position) {
+        // position will be set by world after rebuild
       }
     }
-
-    const geometry = new THREE.BufferGeometry()
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
-    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
-    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
-    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
-    geometry.setIndex(indices)
-    geometry.computeBoundingSphere()
-
-    const material = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true })
-    this.mesh = new THREE.Mesh(geometry, material)
-    this.mesh.receiveShadow = false
-    this.mesh.castShadow = false
-    ;(this.mesh as any).userData.chunk = this
+    ;(this.worker as any).postMessage(message, [message.voxels])
   }
 
   public setVoxel(localX: number, localY: number, localZ: number, value: Voxel): void {
@@ -262,6 +229,27 @@ class World {
       this.scene.add(chunk.mesh)
     }
     this.chunks.set(k, chunk)
+
+    // Procedural trees: sparse distribution in forest biomes
+    const moisture = (this.noise2D((worldX+1000) / 200, (worldZ+1000) / 200) + 1) * 0.5
+    const isForest = moisture > 0.65
+    if (isForest) {
+      for (let i = 0; i < 3; i++) {
+        const tx = worldX + Math.floor(Math.random() * sizeX)
+        const tz = worldZ + Math.floor(Math.random() * sizeZ)
+        // find ground height by scanning up
+        for (let y = sizeY-2; y >= 1; y--) {
+          const { chunk: ch, localX, localZ } = this.getChunkAtWorld(tx, tz)
+          if (!ch) break
+          const vBelow = ch.getVoxel(localX, y, localZ)
+          const vAbove = ch.getVoxel(localX, y+1, localZ)
+          if (vBelow !== BLOCK.Air && vAbove === BLOCK.Air) {
+            this.plantTree(tx, y+1, tz)
+            break
+          }
+        }
+      }
+    }
   }
 
   private unloadChunk(cx: number, cz: number): void {
@@ -298,6 +286,18 @@ class World {
     }
     this.active.clear()
     for (const k of needed) this.active.add(k)
+  }
+
+  public plantTree(worldX: number, baseY: number, worldZ: number): void {
+    const height = 4 + Math.floor(Math.random() * 3)
+    for (let i = 0; i < height; i++) this.setVoxelAtWorld(worldX, baseY + i, worldZ, BLOCK.Log)
+    const topY = baseY + height
+    for (let dz = -2; dz <= 2; dz++) {
+      for (let dx = -2; dx <= 2; dx++) {
+        const dist = Math.abs(dx) + Math.abs(dz)
+        if (dist <= 3) this.setVoxelAtWorld(worldX + dx, topY, worldZ + dz, BLOCK.Grass)
+      }
+    }
   }
 
   public getChunkAtWorld(worldX: number, worldZ: number): { chunk: Chunk | null, localX: number, localZ: number, cx: number, cz: number } {
@@ -571,11 +571,13 @@ function animate() {
   const angle = worldTime * 0.5
   sun.position.set(Math.cos(angle) * 200, 100 + Math.sin(angle) * 150, Math.sin(angle) * 200)
   water.material.opacity = 0.45 + 0.1 * Math.sin(worldTime * 1.5)
-  world.updateStreaming(camera.position, 2)
+  world.updateStreaming(camera.position, renderDistance)
   updateSelection()
   updateCamera(dt)
+  drawMinimap()
   renderer.render(scene, camera)
-  requestAnimationFrame(animate)
+  const frameDelay = Math.max(0, (1000 / fpsCap) - (performance.now() - now))
+  setTimeout(() => requestAnimationFrame(animate), frameDelay)
 }
 animate()
 
@@ -625,8 +627,12 @@ const modeEl = document.getElementById('mode') as HTMLElement | null
 const settingsEl = document.getElementById('settings') as HTMLElement | null
 const sensitivityEl = document.getElementById('sensitivity') as HTMLInputElement | null
 const moveSpeedEl = document.getElementById('movespeed') as HTMLInputElement | null
+const renderDistEl = document.getElementById('renderdist') as HTMLInputElement | null
+const fpsCapEl = document.getElementById('fpscap') as HTMLInputElement | null
 let mouseSensitivity = sensitivityEl ? parseFloat(sensitivityEl.value) : 0.5
 let moveSpeed = moveSpeedEl ? parseFloat(moveSpeedEl.value) : 20
+let renderDistance = renderDistEl ? parseInt(renderDistEl.value) : 2
+let fpsCap = fpsCapEl ? parseInt(fpsCapEl.value) : 60
 
 document.addEventListener('keydown', (e) => {
   if (e.code === 'KeyB') { modeCombat = false; if (modeEl) modeEl.textContent = 'Mode: Build' }
@@ -636,3 +642,32 @@ document.addEventListener('keydown', (e) => {
 
 if (sensitivityEl) sensitivityEl.addEventListener('input', () => { mouseSensitivity = parseFloat(sensitivityEl!.value) })
 if (moveSpeedEl) moveSpeedEl.addEventListener('input', () => { moveSpeed = parseFloat(moveSpeedEl!.value) })
+if (renderDistEl) renderDistEl.addEventListener('input', () => { renderDistance = parseInt(renderDistEl!.value) })
+if (fpsCapEl) fpsCapEl.addEventListener('input', () => { fpsCap = parseInt(fpsCapEl!.value) })
+
+// Minimap setup
+const minimap = document.getElementById('minimap') as HTMLCanvasElement | null
+const mmCtx = minimap ? minimap.getContext('2d') : null
+function drawMinimap() {
+  if (!minimap || !mmCtx) return
+  const size = minimap.width
+  mmCtx.clearRect(0, 0, size, size)
+  mmCtx.fillStyle = 'rgba(0,0,0,0.2)'
+  mmCtx.fillRect(0, 0, size, size)
+  // Simple top-down dots for enemies and player
+  const scale = 2
+  const cx = size / 2
+  const cz = size / 2
+  // Player
+  mmCtx.fillStyle = '#ffffff'
+  mmCtx.fillRect(cx - 2, cz - 2, 4, 4)
+  // Enemies
+  mmCtx.fillStyle = '#ff5555'
+  for (const e of enemies) {
+    const dx = (e.position.x - camera.position.x) / scale
+    const dz = (e.position.z - camera.position.z) / scale
+    const x = cx + dx
+    const z = cz + dz
+    if (x >= 0 && x < size && z >= 0 && z < size) mmCtx.fillRect(x - 2, z - 2, 4, 4)
+  }
+}
